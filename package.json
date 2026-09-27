@@ -1,0 +1,14 @@
+{
+  "name": "agent-office",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A pixel-art office where your Claude Code sessions come to life",
+  "scripts": {
+    "start": "node server.mjs",
+    "demo": "node server.mjs --demo"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

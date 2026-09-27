@@ -1,0 +1,5 @@
+node_modules/
+data/
+.DS_Store
+*.log
+HN_POST.md

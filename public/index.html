@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Office</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Agent Office</h1>
+    <div id="stats"></div>
+    <div class="spacer"></div>
+    <label class="toggle" title="Show out-of-office cubicles (S)"><input type="checkbox" id="showOffline"> Show offline</label>
+    <button id="boardBtn" title="Office dashboard (D)">🏢 Dashboard</button>
+    <button id="newBtn" class="primary" title="New session (N)">＋ New session</button>
+    <button id="helpBtn" title="Help (?)">?</button>
+    <div class="zoom">
+      <button id="zoomOut" title="Zoom out">−</button>
+      <button id="zoomIn" title="Zoom in">+</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="viewport"><canvas id="office"></canvas></div>
+
+    <aside id="panel" hidden>
+      <div class="panel-head">
+        <canvas id="avatar" width="64" height="104"></canvas>
+        <div class="who">
+          <div class="name-row"><h2 id="pName"></h2><span id="pStatus" class="chip"></span></div>
+          <div id="pPreset" class="muted"></div>
+          <div id="pTitle" class="title"></div>
+          <div id="pMeta" class="muted small"></div>
+        </div>
+        <button id="closePanel" class="icon" title="Close (Esc)">✕</button>
+      </div>
+      <button id="copyCmd" class="copy"><span>📋</span> <code id="cmdText"></code></button>
+      <div class="actions">
+        <button id="openBtn" title="Resume in a new terminal window (O)">🖥️ Open in terminal</button>
+        <button id="endBtn" class="danger" title="Stop the running claude process (the transcript is kept)">⏹ End session</button>
+        <button id="hideBtn" title="Remove this cubicle from the office (H)">🙈 Hide</button>
+      </div>
+
+      <nav class="tabs">
+        <button data-tab="work" class="active">Work</button>
+        <button data-tab="ask">Ask</button>
+        <button data-tab="persona">Personality</button>
+      </nav>
+
+      <section id="tab-work" class="tab"></section>
+
+      <section id="tab-ask" class="tab" hidden>
+        <p class="muted small">Asks a forked copy of this session (your original conversation is untouched). Uses your Claude account.</p>
+        <div class="quick">
+          <button data-q="What are you working on right now, and how is it going?">What are you on?</button>
+          <button data-q="Be honest: what do you think of the work so far? What worries you?">Your honest take</button>
+          <button data-q="What should we do next, and what would you need from me?">What's next?</button>
+        </div>
+        <div id="chat"></div>
+        <form id="askForm">
+          <input id="askInput" placeholder="Ask them anything…" autocomplete="off">
+          <button type="submit">Ask</button>
+        </form>
+      </section>
+
+      <section id="tab-persona" class="tab" hidden>
+        <form id="personaForm">
+          <label>Name <input name="name" maxlength="24"></label>
+          <label>Preset
+            <select name="preset" id="presetSelect"></select>
+          </label>
+          <label>Personality traits <textarea name="traits" rows="4"></textarea></label>
+          <div class="quirks">
+            <button type="button" id="genQuirks" class="ghost">✨ Generate quirks with Claude</button>
+            <div id="quirksPreview" class="muted small"></div>
+          </div>
+          <label class="inline"><input type="checkbox" name="impact"> Bring this personality to work</label>
+          <div id="workStylePreview" class="muted small workstyle"></div>
+          <label>Favourite hangout
+            <select name="hangout">
+              <option value="kitchen">☕ Kitchen</option>
+              <option value="gym">💪 Gym</option>
+              <option value="games">🕹️ Game room</option>
+              <option value="lounge">🛋️ Lounge</option>
+            </select>
+          </label>
+          <fieldset>
+            <legend>Look</legend>
+            <div class="swatches" data-field="skin"></div>
+            <div class="swatches" data-field="hair"></div>
+            <div class="swatches" data-field="shirt"></div>
+            <div class="swatches" data-field="pants"></div>
+            <label>Hair style <select name="hairStyle">
+              <option>short</option><option>long</option><option>spiky</option><option>bun</option><option>bald</option>
+            </select></label>
+            <label class="inline"><input type="checkbox" name="glasses"> Glasses</label>
+          </fieldset>
+          <div class="row">
+            <button type="submit">Save personality</button>
+            <button type="button" id="randomize" class="ghost">🎲 Randomize look</button>
+          </div>
+        </form>
+      </section>
+    </aside>
+  </main>
+  <div id="newModal" class="modal" hidden>
+    <form id="newForm" class="card">
+      <h2>Hire a new agent</h2>
+      <p class="muted small">Opens a new terminal window running <code>claude</code> in the chosen project. Their cubicle appears as soon as the session starts.</p>
+      <label>Role
+        <select name="role" id="newRole"></select>
+      </label>
+      <label>Project folder
+        <input name="cwd" list="projectList" placeholder="/path/to/project" required autocomplete="off">
+        <datalist id="projectList"></datalist>
+      </label>
+      <div class="row2">
+        <label>Name <input name="name" maxlength="24" placeholder="random"></label>
+        <label>Personality <select name="preset" id="newPreset"></select></label>
+      </div>
+      <label class="inline"><input type="checkbox" name="impact" checked> Bring the personality to work (adds their work style to Claude's system prompt)</label>
+      <label>First task <span id="taskHint">(optional)</span>
+        <textarea name="prompt" rows="4" placeholder="e.g. Look at the failing tests in api/ and fix them"></textarea>
+      </label>
+      <fieldset class="mode">
+        <legend>Where should they work?</legend>
+        <label class="inline"><input type="radio" name="mode" value="terminal" checked> 🖥️ In a terminal: interactive, you chat with them as usual</label>
+        <label class="inline"><input type="radio" name="mode" value="background"> 🏢 Inside the office: runs in the background with read-only tools and hands in a 📋 report</label>
+      </fieldset>
+      <div class="row">
+        <button type="submit" class="primary" id="hireBtn">Hire &amp; open terminal</button>
+        <button type="button" class="ghost" data-close>Cancel</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="board" class="modal" hidden>
+    <div class="card board">
+      <div class="board-head">
+        <h2>🏢 Office dashboard</h2>
+        <nav class="tabs" id="boardTabs">
+          <button data-btab="overview" class="active">Overview</button>
+          <button data-btab="employees">Employees</button>
+          <button data-btab="leaderboard">Leaderboard</button>
+          <button data-btab="settings">Settings</button>
+        </nav>
+        <button class="icon" data-close title="Close (Esc)">✕</button>
+      </div>
+      <section data-bpane="overview"></section>
+      <section data-bpane="employees" hidden></section>
+      <section data-bpane="leaderboard" hidden></section>
+      <section data-bpane="settings" hidden>
+        <div class="settings">
+          <label class="toggle"><input type="checkbox" id="setOffline"> Show offline (out-of-office) cubicles</label>
+          <label class="toggle"><input type="checkbox" id="setMatrix"> Matrix mode 🕶️</label>
+          <label class="toggle"><input type="checkbox" id="setCritters"> Office critters (white rabbit, black cat)</label>
+          <label>"Your turn" lasts <select id="setYourTurn"><option value="5">5 min</option><option value="10">10 min</option><option value="20">20 min</option><option value="60">1 hour</option></select> before an idle agent takes a break</label>
+          <div class="row"><button id="setUnhide">Bring back hidden cubicles</button><button id="setFit">Reset zoom</button><button id="setHelp">Show help</button></div>
+          <div id="setInfo" class="muted small"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="help" class="modal" hidden>
+    <div class="card help">
+      <h2>How the office works</h2>
+      <div class="cols">
+        <section>
+          <h3>Agents</h3>
+          <p>Every Claude Code session from the last 14 days gets a cubicle. Cubicles are grouped by project; the coloured stripe on a nameplate marks the project.</p>
+          <ul class="legend">
+            <li><span class="dot" style="background:#4cd964"></span><b>Busy</b>: typing at their desk; the bubble shows the current tool</li>
+            <li><span class="dot" style="background:#f5b83d"></span><b>Waiting</b>: hand raised, needs your permission or input</li>
+            <li><span class="dot" style="background:#c792ff"></span><b>Your turn</b>: just replied, sitting at their desk waiting for you</li>
+            <li><span class="dot" style="background:#6fb7ff"></span><b>Idle</b>: open, but quiet for a while, so off on a break</li>
+            <li><span class="dot" style="background:#7a7590"></span><b>Offline</b>: out of office 🌴, empty chair (hide them with <i>Show offline</i>)</li>
+          </ul>
+          <h3>Progress</h3>
+          <p>Agents earn <b>XP</b> for hands-on work time, tool calls, lines changed and PRs, and level up from Intern to Legend ⭐. They unlock achievements 🏅, and the top earner wears the 👑. The thin bar under each nameplate shows how full their <b>context window</b> is; above 80% they start sweating 🥵.</p>
+          <h3>Promotions</h3>
+          <p>At <b>level 5</b> an agent moves out of their cubicle into a <b>private office</b> in the executive wing 🎉.</p>
+          <h3>Roles</h3>
+          <p>Hire a <b>PR Reviewer</b>, <b>QA Tester</b>, <b>Bug Hunter</b>, <b>Security Auditor</b> or <b>Docs Reviewer</b> from <i>New session</i>. Let them work <i>inside the office</i> and they run in the background with read-only tools (QA roles may also run tests), then hand in a 📋 report.</p>
+          <h3>Helpers</h3>
+          <p>When a session spawns subagents, little 🤖 helper bots ride up the elevator and stand at the cubicle until their job is done.</p>
+          <h3>Personality</h3>
+          <p>Each personality types, fidgets, talks and takes breaks differently. With <i>Bring this personality to work</i> on, their work style (a Perfectionist tests everything, a Detective finds the root cause first) is added to Claude's system prompt when you start or resume them from the office.</p>
+          <p class="muted small">Psst: follow the white rabbit 🐇.</p>
+          <p class="muted small">On a break they grab coffee, hit the gym, play ping pong or arcade, lounge on the sofa, chat with each other, or peek into a busy colleague's cubicle 👀. Their favourite hangout comes from their personality.</p>
+        </section>
+        <section>
+          <h3>Mouse</h3>
+          <ul class="keys">
+            <li><kbd>Click</kbd> agent or nameplate: copy <code>claude --resume</code> and open their details panel</li>
+            <li><kbd>Click</kbd> empty floor: close the panel</li>
+          </ul>
+          <h3>Keyboard</h3>
+          <ul class="keys">
+            <li><kbd>?</kbd> this help</li>
+            <li><kbd>N</kbd> hire a new agent (new session)</li>
+            <li><kbd>D</kbd> office dashboard (costs, employees, leaderboard, settings)</li>
+            <li><kbd>S</kbd> show / hide offline agents</li>
+            <li><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> cycle through agents</li>
+            <li><kbd>O</kbd> open selected agent in a terminal</li>
+            <li><kbd>C</kbd> copy the resume command</li>
+            <li><kbd>A</kbd> ask the selected agent a question</li>
+            <li><kbd>H</kbd> hide the selected cubicle</li>
+            <li><kbd>+</kbd> / <kbd>−</kbd> zoom, <kbd>0</kbd> fit to window</li>
+            <li><kbd>Esc</kbd> close panel / dialogs</li>
+          </ul>
+          <h3>Panel</h3>
+          <p class="muted small"><b>Work</b>: what they did and said. <b>Ask</b>: questions go to a forked copy of the session, so your real conversation is untouched. <b>Personality</b>: name, character, hangout and look.</p>
+          <p class="muted small" id="hiddenInfo"></p>
+        </section>
+      </div>
+      <div class="row"><button class="primary" data-close>Got it</button></div>
+    </div>
+  </div>
+
+  <div id="toast" hidden></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
