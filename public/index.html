@@ -30,19 +30,26 @@
       <div class="panel-head">
         <canvas id="avatar" width="64" height="104"></canvas>
         <div class="who">
-          <div class="name-row"><h2 id="pName"></h2><span id="pStatus" class="chip"></span></div>
-          <div id="pPreset" class="muted"></div>
-          <div id="pDoing" class="doing"></div>
-          <div id="pTitle" class="title"></div>
-          <div id="pMeta" class="muted small"></div>
+          <div class="name-row"><h2 id="pName"></h2><button id="closePanel" class="icon" title="Close (Esc)">✕</button></div>
+          <div id="pBadges" class="badge-row"></div>
+          <div id="pMeta" class="muted small meta"></div>
         </div>
-        <button id="closePanel" class="icon" title="Close (Esc)">✕</button>
       </div>
-      <button id="copyCmd" class="copy"><span>📋</span> <code id="cmdText"></code></button>
-      <div class="actions">
-        <button id="openBtn" title="Resume in a new terminal window (O)">🖥️ Open in terminal</button>
-        <button id="endBtn" class="danger" title="Stop the running claude process (the transcript is kept)">⏹ End session</button>
-        <button id="hideBtn" title="Remove this cubicle from the office (H)">🙈 Hide</button>
+
+      <div class="status-box">
+        <div class="label">Status</div>
+        <div id="pDoing" class="doing"></div>
+        <div class="label">Session</div>
+        <div id="pTitle" class="title"></div>
+      </div>
+
+      <div class="panel-actions">
+        <button id="copyCmd" class="copy" title="Copy the resume command (C)"><span>📋</span> <code id="cmdText"></code></button>
+        <div class="actions">
+          <button id="openBtn" title="Resume in a new terminal window (O)">🖥️ Open in terminal</button>
+          <button id="endBtn" class="danger" title="Stop the running claude process (the transcript is kept)">⏹ End session</button>
+          <button id="hideBtn" title="Remove this cubicle from the office (H)">🙈 Hide</button>
+        </div>
       </div>
 
       <nav class="tabs">

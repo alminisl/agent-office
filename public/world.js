@@ -128,17 +128,17 @@ export function buildWorld(sessions) {
 
   // kitchen
   O('counter', 1, c1, 3); O('coffee', 2, c1, 1, 1, { block: false, over: true });
-  O('cooler', 5, c1); O('fridge', 8, c1);
+  O('cooler', 6, c1); O('fridge', 8, c1);
   S('kitchen', 2, c1 + 1, 'up', 'use', '☕', { dur: [6, 12] });
-  S('kitchen', 5, c1 + 1, 'up', 'stand', '💧');
+  S('kitchen', 6, c1 + 1, 'up', 'stand', '💧');
   S('kitchen', 8, c1 + 1, 'up', 'use', '🥪');
   O('table', 3, c1 + 5, 4, 2);
   for (const x of [4, 5]) { S('kitchen', x, c1 + 4, 'down', 'sit', '☕', { dur: [10, 20] }); S('kitchen', x, c1 + 7, 'up', 'sit', '🍩', { dur: [10, 20] }); }
   O('plant', 1, c1 + 9); O('plant', 9, c1 + 9);
 
   // gym
-  O('treadmill', 12, c1 + 1, 1, 1, { block: false, under: true }); O('treadmill', 14, c1 + 1, 1, 1, { block: false, under: true });
-  S('gym', 12, c1 + 1, 'down', 'run', '🏃', { dur: [8, 16] }); S('gym', 14, c1 + 1, 'down', 'run', '🏃', { dur: [8, 16] });
+  O('treadmill', 12, c1 + 1, 1, 1, { block: false, under: true }); O('treadmill', 16, c1 + 1, 1, 1, { block: false, under: true });
+  S('gym', 12, c1 + 1, 'down', 'run', '🏃', { dur: [8, 16] }); S('gym', 16, c1 + 1, 'down', 'run', '🏃', { dur: [8, 16] });
   O('rack', 18, c1, 1, 3);
   O('bench', 12, c1 + 5, 2, 1, { block: false, under: true });
   S('gym', 12, c1 + 5, 'down', 'lift', '💪', { dur: [6, 12] });
@@ -159,15 +159,21 @@ export function buildWorld(sessions) {
   S('games', 20, c1, 'down', 'sit', '📱');
 
   // lounge
-  O('sofa', 31, c1 + 1, 3, 1, { block: false, under: true }); O('sofaFront', 31, c1 + 1, 3, 1, { block: false, over: true });
-  for (const x of [31, 32, 33]) S('lounge', x, c1 + 1, 'down', 'sit', x === 32 ? '📺' : '💬', { dur: [12, 25], nap: true });
-  O('ctable', 31, c1 + 3, 3, 1);
-  O('tv', 31, c1 + 6, 3, 1);
+  O('sofa', 30, c1 + 1, 3, 1, { block: false, under: true }); O('sofaFront', 30, c1 + 1, 3, 1, { block: false, over: true });
+  for (const x of [30, 31, 32]) S('lounge', x, c1 + 1, 'down', 'sit', x === 31 ? '📺' : '💬', { dur: [12, 25], nap: true });
+  O('ctable', 30, c1 + 3, 3, 1);
+  O('tv', 30, c1 + 6, 3, 1);
   O('shelf', 36, c1, 1, 1); O('shelf', 37, c1, 1, 1);
   S('lounge', 36, c1 + 1, 'up', 'stand', '📖', { dur: [6, 12] });
   O('beanbag', 36, c1 + 5, 1, 1, { block: false, under: true, color: '#16a085' });
   S('lounge', 36, c1 + 5, 'down', 'sit', '🎧', { dur: [12, 25], nap: true });
   O('lamp', 30, c1 + 9); O('plant', 37, c1 + 9);
+
+  // keep doorways clear: nothing may stand on the first two tiles inside a door
+  for (const z of zones) for (const dx of z.door) for (const y of [c1, c1 + 1]) {
+    const hit = objects.find(o => dx >= o.x && dx < o.x + o.w && y >= o.y && y < o.y + o.h) || spots.find(sp => sp.x === dx && sp.y === y);
+    if (hit) console.warn(`${z.id} doorway at ${dx},${y} is blocked by`, hit.type || hit.id);
+  }
 
   // blocking grid
   const walkable = tiles.map(row => row.map(t => t.kind !== 'wall'));

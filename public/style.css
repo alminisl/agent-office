@@ -23,15 +23,15 @@ button:hover { border-color: var(--accent); }
 .zoom button { width: 32px; font-weight: 600; }
 
 main { display: flex; height: calc(100% - 53px); }
-#viewport { flex: 1; overflow: auto; position: relative; }
+#viewport { flex: 1; min-width: 0; overflow: auto; position: relative; }
 #office { display: block; margin: 0 auto; image-rendering: pixelated; cursor: default; }
 
-#panel { width: 420px; max-width: 100%; border-left: 1px solid var(--border); background: var(--panel); overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+#panel { flex: none; width: 440px; max-width: 100%; border-left: 1px solid var(--border); background: var(--panel); overflow-y: auto; overflow-x: hidden; padding: 18px 18px 28px; display: flex; flex-direction: column; gap: 14px; }
 #panel[hidden] { display: none; }
-.panel-head { display: flex; gap: 12px; align-items: flex-start; }
+.panel-head { display: flex; gap: 14px; align-items: flex-start; }
 #avatar { image-rendering: pixelated; background: var(--panel-2); border-radius: 8px; flex: none; }
 .who { flex: 1; min-width: 0; }
-.name-row { display: flex; align-items: center; gap: 8px; }
+.name-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 h2 { margin: 0; font: 20px Silkscreen, monospace; }
 .title { font-weight: 600; margin-top: 4px; }
 .muted { color: var(--muted); }
@@ -174,3 +174,42 @@ body.matrix h1, body.matrix #stats { color: #00ff66; text-shadow: 0 0 6px #00ff6
 .pack p { margin: 0; }
 
 .doing { font-size: 13px; font-weight: 600; color: var(--text); margin-top: 2px; }
+
+/* ---- agent panel layout ---- */
+#panel h2 { font-size: 22px; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 6px; }
+.pill { font-size: 11px; line-height: 1; padding: 5px 8px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+.pill.lv { background: #ffe06622; border-color: #ffe06666; color: #ffe9a0; }
+.badge-row .chip { line-height: 1; padding: 5px 8px; }
+.meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-box { background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 12px; display: grid; grid-template-columns: 64px 1fr; gap: 6px 10px; align-items: baseline; }
+.status-box .label { font: 10px Silkscreen, monospace; color: var(--muted); letter-spacing: .5px; text-transform: uppercase; }
+.status-box .doing { margin: 0; font-size: 14px; }
+.status-box .title { margin: 0; font-weight: 600; }
+.status-box .doing, .status-box .title { word-break: break-word; }
+.panel-actions { display: flex; flex-direction: column; gap: 8px; }
+.panel-actions .copy { min-width: 0; }
+.panel-actions .copy code { min-width: 0; flex: 1; }
+.actions:empty, .actions:not(:has(button:not([hidden]))) { display: none; }
+.tab { display: flex; flex-direction: column; gap: 4px; }
+.tab[hidden] { display: none; }
+.tab h3 { margin: 18px 0 8px; padding-top: 14px; border-top: 1px solid var(--border); }
+.tab > h3:first-child, .tab > .report-head:first-child h3 { margin-top: 4px; padding-top: 0; border-top: none; }
+.tab .kv { margin: 6px 0; }
+.kv div { padding: 8px 10px; }
+.kv b { font-size: 15px; }
+.level-card { margin: 10px 0 4px; }
+.report-head { display: flex; align-items: center; justify-content: space-between; }
+.report-head h3 { border-top: none; padding-top: 0; margin: 4px 0 8px; }
+.report { margin-bottom: 4px; line-height: 1.5; }
+.item { line-height: 1.5; padding: 10px 12px; margin-bottom: 8px; }
+.item time { margin-bottom: 4px; }
+.badges { gap: 8px; }
+.badge { padding: 8px 6px; line-height: 1.3; }
+.files li { padding: 2px 0; }
+button.small, .report-head button { font-size: 11px; padding: 3px 10px; }
+
+.md code { font: 12px ui-monospace, Menlo, monospace; background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 5px; }
+.md pre { font: 12px ui-monospace, Menlo, monospace; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; }
+.md b { color: #fff; }
+.md .md-h { display: inline-block; margin-top: 4px; font-size: 14px; }

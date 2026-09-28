@@ -765,7 +765,7 @@ function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now; time += dt;
   if (selectedId && Math.floor(time * 2) !== Math.floor((time - dt) * 2)) { // refresh the panel's status line twice a second
     const a = agents.get(selectedId);
-    if (a) $('#pDoing').textContent = `Status: ${a.statusText()}`;
+    if (a) $('#pDoing').textContent = a.statusText();
   }
   if (world) { for (const a of agents.values()) a.update(dt); for (const h of helpers.values()) h.update(dt); updateEffects(dt); updateMatrix(dt); updateCritters(dt); render(); }
   requestAnimationFrame(loop);
@@ -819,6 +819,17 @@ function toast(html) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, link ? 8000 : 2600);
 }
 
+// Tiny, safe markdown for reports and replies: escape everything first, then add a few styles.
+function md(text) {
+  let h = escapeHtml(text);
+  h = h.replace(/```[a-z]*\n?([\s\S]*?)```/g, (_, code) => `<pre>${code.replace(/\n$/, '')}</pre>`);
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+  h = h.replace(/^#{1,4} (.+)$/gm, '<b class="md-h">$1</b>');
+  h = h.replace(/^\|?[-: |]+\|[-: |]*$/gm, '');                       // drop table separator rows
+  return h;
+}
+
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function ago(t) {
   const d = (Date.now() - new Date(t).getTime()) / 1000;
@@ -862,14 +873,20 @@ function updatePanelHeader() {
   const s = a.session, p = a.persona;
   $('#pName').textContent = p.name;
   const ds = displayStatus(s);
-  const st = $('#pStatus'); st.textContent = ds; st.className = `chip ${ds.replace(' ', '-')}`;
+  const role = roleFor(p.role);
+  const preset = PRESETS.find(x => x.key === p.preset)?.label || '✏️ Custom';
+  $('#pBadges').innerHTML = [
+    `<span class="chip ${ds.replace(' ', '-')}">${ds === 'offline' ? 'out of office' : ds}</span>`,
+    `<span class="pill lv">Lv ${s.level || 1} · ${escapeHtml(s.rank || 'Intern')}</span>`,
+    `<span class="pill">${escapeHtml(preset)}</span>`,
+    role ? `<span class="pill">${role.icon} ${escapeHtml(role.label)}</span>` : '',
+    s.background ? '<span class="pill">🏢 in the office</span>' : '',
+  ].join('');
   $('#endBtn').hidden = !s.live;
   $('#hideBtn').hidden = s.live;
   $('#openBtn').hidden = s.live;
-  const role = roleFor(p.role);
-  $('#pPreset').textContent = `${PRESETS.find(x => x.key === p.preset)?.label || 'Custom personality'}${role ? ` · ${role.icon} ${role.label}` : ''}${s.background ? ' · working in the office' : ''}`;
   $('#pTitle').textContent = s.title;
-  $('#pDoing').textContent = `Status: ${a.statusText()}`;
+  $('#pDoing').textContent = a.statusText();
   $('#pMeta').textContent = `${s.project}${s.gitBranch ? ` · ${s.gitBranch}` : ''} · ${ago(s.updatedAt)}`;
   $('#cmdText').textContent = resumeCmd(s);
   const av = $('#avatar').getContext('2d');
@@ -898,7 +915,7 @@ function renderWork() {
   const reportHtml = d.runState === 'running'
     ? `<h3>📋 Report</h3><p class="muted small">${role ? role.icon : '🏢'} Working on it in the background… the report appears here when they're done.</p>`
     : rep ? `<div class="report-head"><h3>📋 Report${role ? ` · ${role.icon} ${escapeHtml(role.label)}` : ''}</h3><button class="small" id="copyReport">Copy</button></div>
-      <div class="report ${rep.ok ? '' : 'failed'}">${escapeHtml(rep.result)}</div>
+      <div class="report md ${rep.ok ? '' : 'failed'}">${md(rep.result)}</div>
       <div class="muted small">${rep.ok ? 'Finished' : 'Failed'} ${ago(rep.endedAt)} · ${fmtDuration(rep.endedAt - rep.startedAt)} · $${(rep.cost || 0).toFixed(2)}. Ask follow-ups in the Ask tab, or open them in a terminal to continue.</div>`
     : '';
   $('#tab-work').innerHTML = `
@@ -928,7 +945,7 @@ function renderWork() {
     </div>
     ${d.prs.length ? `<h3>Pull requests</h3>${d.prs.map(p => `<div><a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.repo)} #${p.number}</a></div>`).join('')}` : ''}
     <h3>Latest thoughts</h3>
-    ${replies.map(r => `<div class="item"><time>${ago(r.at)}</time>${escapeHtml(r.text)}</div>`).join('') || '<p class="muted">Nothing yet.</p>'}
+    ${replies.map(r => `<div class="item md"><time>${ago(r.at)}</time>${md(r.text)}</div>`).join('') || '<p class="muted">Nothing yet.</p>'}
     <h3>What you asked</h3>
     ${prompts.map(r => `<div class="item"><time>${ago(r.at)}</time>${escapeHtml(r.text)}</div>`).join('') || '<p class="muted">No prompts.</p>'}
     ${d.files.length ? `<h3>Files touched</h3><ul class="files">${d.files.map(f => `<li title="${escapeHtml(f.path)}">${escapeHtml(f.path.replace(d.cwd + '/', ''))} <span>×${f.edits}</span></li>`).join('')}</ul>` : ''}
@@ -947,7 +964,7 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 // ask
 function renderChat() {
   const log = chats.get(selectedId) || [];
-  $('#chat').innerHTML = log.map(m => `<div class="msg ${m.who}${m.thinking ? ' thinking' : ''}">${escapeHtml(m.text)}</div>`).join('');
+  $('#chat').innerHTML = log.map(m => `<div class="msg md ${m.who}${m.thinking ? ' thinking' : ''}">${m.who === 'them' ? md(m.text) : escapeHtml(m.text)}</div>`).join('');
 }
 
 async function ask(question) {
