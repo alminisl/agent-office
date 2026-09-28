@@ -2,6 +2,16 @@
 // into a small offscreen buffer and scaled up with smoothing disabled.
 export const T = 16;
 
+// Floor themes: colours for the open floor, walls, partitions and windows.
+export const THEMES = {
+  classic: { label: 'Classic', hall: ['#8f9aa8', '#8a95a3', '#838e9c'], wall: ['#3d3a4b', '#4a4659'], face: ['#e8dcc4', '#d6c7aa', '#b9a988'], part: ['#4b576b', '#5d6b82', '#71809a'], sky: ['#9ed3f0', '#c7e8fa'], frame: '#6d6a7c' },
+  loft: { label: 'Startup loft', hall: ['#9a9590', '#948f8a', '#8a857f'], wall: ['#5a2f24', '#6b3a2c'], face: ['#a4553f', '#8f4a36', '#6e3829'], part: ['#2b2b2b', '#3a3a3a', '#d9a441'], sky: ['#bfe3f2', '#e2f3fa'], frame: '#222', bricks: true },
+  beige: { label: 'Dunder Mifflin beige', hall: ['#b9ab8c', '#b3a586', '#a89a7c'], wall: ['#6e6758', '#7c7464'], face: ['#e6dcc2', '#d9ceb1', '#bfb394'], part: ['#7d8591', '#8f97a2', '#a6adb7'], sky: ['#c9d6dc', '#e0e8ec'], frame: '#8a8375' },
+  space: { label: 'Space station', hall: ['#2c3342', '#283040', '#3a4458'], wall: ['#141824', '#1f2535'], face: ['#39465e', '#2f3a50', '#6ce0ff'], part: ['#1f2535', '#2b3348', '#6ce0ff'], sky: ['#070b1a', '#0d1430'], frame: '#4b5670', stars: true },
+};
+let theme = THEMES.classic;
+export function setTheme(key) { theme = THEMES[key] || THEMES.classic; cache.clear(); }
+
 const cache = new Map();
 
 function canvas(w, h) {
@@ -153,6 +163,7 @@ function drawCharacter(g, L, dir, pose, f) {
 function hash(x, y) { let h = x * 374761393 + y * 668265263; h = (h ^ (h >> 13)) * 1274126177; return (h ^ (h >> 16)) >>> 0; }
 
 export const FLOORS = {
+  meeting: ['#5b6b7a', '#566575'],
   hall: ['#cbbfa8', '#c3b79f'],
   kitchen: ['#e9e4d8', '#d9d2c2'],
   gym: ['#6f7d8c', '#667381'],
@@ -182,8 +193,8 @@ export function drawFloor(g, x, y, kind, tint) {
     return;
   }
   if (kind === 'hall') {
-    g.fillStyle = (x + y) % 2 ? '#8f9aa8' : '#8a95a3'; g.fillRect(X, Y, T, T);
-    g.fillStyle = '#838e9c';
+    g.fillStyle = (x + y) % 2 ? theme.hall[0] : theme.hall[1]; g.fillRect(X, Y, T, T);
+    g.fillStyle = theme.hall[2];
     for (let i = 0; i < 4; i++) g.fillRect(X + ((h >> (i * 4)) % 16), Y + ((h >> (i * 3 + 7)) % 16), 1, 1);
     return;
   }
@@ -206,13 +217,15 @@ export function drawFloor(g, x, y, kind, tint) {
 
 export function drawWall(g, x, y, faceBelow) {
   const X = x * T, Y = y * T;
-  g.fillStyle = '#3d3a4b'; g.fillRect(X, Y, T, T);
-  g.fillStyle = '#4a4659'; g.fillRect(X, Y, T, 3);
+  g.fillStyle = theme.wall[0]; g.fillRect(X, Y, T, T);
+  g.fillStyle = theme.wall[1]; g.fillRect(X, Y, T, 3);
   if (faceBelow) {
     // visible wall face
-    g.fillStyle = '#e8dcc4'; g.fillRect(X, Y + 5, T, 11);
-    g.fillStyle = '#d6c7aa'; g.fillRect(X, Y + 13, T, 3);
-    g.fillStyle = '#b9a988'; g.fillRect(X, Y + 15, T, 1);
+    g.fillStyle = theme.face[0]; g.fillRect(X, Y + 5, T, 11);
+    g.fillStyle = theme.face[1]; g.fillRect(X, Y + 13, T, 3);
+    g.fillStyle = theme.face[2]; g.fillRect(X, Y + 15, T, 1);
+    if (theme.bricks) { g.fillStyle = theme.face[1]; for (let r = 0; r < 2; r++) for (let i = 0; i < 4; i++) g.fillRect(X + ((i * 5 + r * 2) % 16), Y + 7 + r * 3, 1, 2); g.fillRect(X, Y + 9, T, 1); }
+    if (theme.stars) { g.fillStyle = theme.face[2]; g.fillRect(X, Y + 10, T, 1); }
   }
 }
 
@@ -241,15 +254,15 @@ export const FURNITURE = {
       return;
     }
     // front cubicle panel (spans the partition column on the left)
-    g.fillStyle = '#5d6b82'; g.fillRect(X - 3, Y + 5, w + 6, 11);
-    g.fillStyle = '#71809a'; g.fillRect(X - 3, Y + 5, w + 6, 2);
-    g.fillStyle = '#4b576b'; g.fillRect(X - 3, Y + 15, w + 6, 1);
+    g.fillStyle = theme.part[1]; g.fillRect(X - 3, Y + 5, w + 6, 11);
+    g.fillStyle = theme.part[2]; g.fillRect(X - 3, Y + 5, w + 6, 2);
+    g.fillStyle = theme.part[0]; g.fillRect(X - 3, Y + 15, w + 6, 1);
   },
   partition(g, X, Y, o) {
     const h = o.h * T;
-    g.fillStyle = '#4b576b'; g.fillRect(X + 5, Y - 8, 6, h + 8);
-    g.fillStyle = '#71809a'; g.fillRect(X + 5, Y - 8, 6, 2);
-    g.fillStyle = '#5d6b82'; g.fillRect(X + 6, Y - 6, 4, h + 6);
+    g.fillStyle = theme.part[0]; g.fillRect(X + 5, Y - 8, 6, h + 8);
+    g.fillStyle = theme.part[2]; g.fillRect(X + 5, Y - 8, 6, 2);
+    g.fillStyle = theme.part[1]; g.fillRect(X + 6, Y - 6, 4, h + 6);
   },
   cabinet(g, X, Y) {
     g.fillStyle = '#9aa3ae'; g.fillRect(X + 2, Y - 2, 12, 16);
@@ -399,10 +412,12 @@ export const FURNITURE = {
   },
   window(g, X, Y, o) {
     const w = o.w * T;
-    g.fillStyle = '#6d6a7c'; g.fillRect(X + 1, Y + 4, w - 2, 11);
-    g.fillStyle = '#9ed3f0'; g.fillRect(X + 2, Y + 5, w - 4, 9);
-    g.fillStyle = '#c7e8fa'; g.fillRect(X + 3, Y + 6, 3, 3);
-    g.fillStyle = '#6d6a7c'; g.fillRect(X + w / 2, Y + 5, 1, 9);
+    const night = o.night || theme.stars;
+    g.fillStyle = theme.frame; g.fillRect(X + 1, Y + 4, w - 2, 11);
+    g.fillStyle = night ? '#0d1430' : theme.sky[0]; g.fillRect(X + 2, Y + 5, w - 4, 9);
+    if (night) { g.fillStyle = '#fff'; g.fillRect(X + 5, Y + 7, 1, 1); g.fillRect(X + 12, Y + 10, 1, 1); g.fillRect(X + 20, Y + 6, 1, 1); g.fillStyle = '#f5e7a1'; g.fillRect(X + w - 8, Y + 6, 3, 3); }
+    else { g.fillStyle = theme.sky[1]; g.fillRect(X + 3, Y + 6, 3, 3); }
+    g.fillStyle = theme.frame; g.fillRect(X + w / 2, Y + 5, 1, 9);
   },
   lamp(g, X, Y, o, t) {
     g.fillStyle = '#555'; g.fillRect(X + 7, Y - 8, 2, 20);
@@ -476,3 +491,9 @@ export function critterFrame(kind, frame) {
   cache.set(key, cv);
   return cv;
 }
+
+FURNITURE.chair = (g, X, Y, o) => {
+  g.fillStyle = '#3a3d45'; g.fillRect(X + 3, Y + 4, 10, 9);
+  g.fillStyle = '#4b4f58'; g.fillRect(X + 4, Y + 5, 8, 6);
+  g.fillStyle = '#2b2d33'; if (o.dir === 'down') g.fillRect(X + 3, Y + 1, 10, 4); else g.fillRect(X + 3, Y + 11, 10, 4);
+};

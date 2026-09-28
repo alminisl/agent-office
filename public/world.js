@@ -27,7 +27,7 @@ export function buildWorld(sessions) {
   const base = officeRows ? officeRows * OFFICE_PITCH : 0; // cubicle area starts on the last office aisle (offices start at y=1)
   const rows = cube.length ? Math.ceil(cube.length / CUBES_PER_ROW) : (exec.length ? 0 : 1);
   const yCommon = base + 3 + rows * ROW_PITCH;
-  const H = yCommon + 12;
+  const H = yCommon + 20; // common area (kitchen/gym/games/lounge) + meeting room below it
   const tiles = Array.from({ length: H }, () => Array.from({ length: W }, () => ({ kind: 'wall' })));
   const set = (x, y, kind, extra) => { if (tiles[y]?.[x]) tiles[y][x] = { kind, ...extra }; };
   const objects = [];
@@ -170,8 +170,25 @@ export function buildWorld(sessions) {
   S('lounge', 36, c1 + 5, 'down', 'sit', '🎧', { dur: [12, 25], nap: true });
   O('lamp', 30, c1 + 9); O('plant', 37, c1 + 9);
 
+  // meeting room under the common area, reachable through the kitchen and the lounge
+  const m0 = c1 + 11;
+  const meeting = { id: 'meeting', label: 'MEETING ROOM', x0: 1, x1: W - 2, door: [5, 34], y0: m0, y1: m0 + 6 };
+  for (let y = m0; y <= m0 + 6; y++) for (let x = 1; x <= W - 2; x++) set(x, y, 'meeting');
+  for (const dx of meeting.door) set(dx, c1 + 10, 'meeting');
+  zones.push(meeting);
+  O('table', 10, m0 + 2, 18, 2);
+  for (let x = 10; x <= 27; x++) {
+    O('chair', x, m0 + 1, 1, 1, { block: false, under: true, dir: 'down' });
+    O('chair', x, m0 + 4, 1, 1, { block: false, under: true, dir: 'up' });
+    S('meeting', x, m0 + 1, 'down', 'sit', null, { meeting: true });
+    S('meeting', x, m0 + 4, 'up', 'sit', null, { meeting: true });
+  }
+  O('tv', 3, m0 + 2, 3, 1);
+  objects.push({ type: 'whiteboard', x: 14, y: c1 + 10, w: 2, h: 1, wall: true }, { type: 'whiteboard', x: 23, y: c1 + 10, w: 2, h: 1, wall: true });
+  O('plant', 1, m0 + 6); O('plant', W - 2, m0 + 6); O('plant', 1, m0 + 1); O('plant', W - 2, m0 + 1);
+
   // keep doorways clear: nothing may stand on the first two tiles inside a door
-  for (const z of zones) for (const dx of z.door) for (const y of [c1, c1 + 1]) {
+  for (const z of zones) for (const dx of z.door) for (const y of (z.id === 'meeting' ? [m0, m0 + 1, c1 + 9, c1 + 8] : [c1, c1 + 1])) {
     const hit = objects.find(o => dx >= o.x && dx < o.x + o.w && y >= o.y && y < o.y + o.h) || spots.find(sp => sp.x === dx && sp.y === y);
     if (hit) console.warn(`${z.id} doorway at ${dx},${y} is blocked by`, hit.type || hit.id);
   }
@@ -184,7 +201,7 @@ export function buildWorld(sessions) {
   const wanderPts = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (tiles[y][x].kind === 'hall' && walkable[y][x] && (x * 7 + y * 3) % 11 === 0) wanderPts.push({ x, y });
 
-  const world = { W, H, tiles, walkable, objects, spots, rooms, zones, wanderPts, yCommon, elevator, spawn };
+  const world = { W, H, tiles, walkable, objects, spots, rooms, zones, wanderPts, yCommon, elevator, spawn, meeting };
   for (const s of spots) if (!findPath(world, { x: 2, y: 1 }, s)) console.warn('unreachable spot', s.id);
   return world;
 }

@@ -14,6 +14,8 @@
     <div id="stats"></div>
     <div class="spacer"></div>
     <label class="toggle" title="Show out-of-office cubicles (S)"><input type="checkbox" id="showOffline"> Show offline</label>
+    <button id="standupBtn" title="Daily standup (M)">🧍 Standup</button>
+    <button id="replayBtn" title="Replay the last 24 hours (T)">⏱️ Replay</button>
     <button id="boardBtn" title="Office dashboard (D)">🏢 Dashboard</button>
     <button id="newBtn" class="primary" title="New session (N)">＋ New session</button>
     <button id="helpBtn" title="Help (?)">?</button>
@@ -167,6 +169,8 @@
       <section data-bpane="settings" hidden>
         <div class="settings">
           <label class="toggle"><input type="checkbox" id="setOffline"> Show offline (out-of-office) cubicles</label>
+          <label>🎨 Office theme <select id="setTheme"></select></label>
+          <label>🌗 Lighting <select id="setLighting"><option value="auto">Follow my clock (day and night)</option><option value="day">Always day</option><option value="night">Always night</option></select></label>
           <label class="toggle"><input type="checkbox" id="setMatrix"> Matrix mode 🕶️</label>
           <label class="toggle"><input type="checkbox" id="setCritters"> Office critters (white rabbit, black cat)</label>
           <label>"Your turn" lasts <select id="setYourTurn"><option value="1">1 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="20">20 min</option><option value="60">1 hour</option></select> before an idle agent takes a break</label>
@@ -203,6 +207,8 @@
           <p>At <b>level 5</b> an agent moves out of their cubicle into a <b>private office</b> in the executive wing 🎉.</p>
           <h3>Roles</h3>
           <p>Hire a <b>PR Reviewer</b>, <b>QA Tester</b>, <b>Bug Hunter</b>, <b>Security Auditor</b> or <b>Docs Reviewer</b> from <i>New session</i>. Let them work <i>inside the office</i> and they run in the background with read-only tools (QA roles may also run tests), then hand in a 📋 report.</p>
+          <h3>Standups, handoffs & replay</h3>
+          <p><b>🧍 Standup</b> sends everyone to the meeting room and writes yesterday, today and blockers for each agent. <b>🤝 Handoffs</b>: drag a report onto another agent to give them the job. <b>⏱️ Replay</b> plays back the last 24 hours. Themes and day/night lighting live in Dashboard → Settings.</p>
           <h3>Helpers</h3>
           <p>When a session spawns subagents, little 🤖 helper bots ride up the elevator and stand at the cubicle until their job is done.</p>
           <h3>Personality</h3>
@@ -215,11 +221,14 @@
           <ul class="keys">
             <li><kbd>Click</kbd> agent or nameplate: copy <code>claude --resume</code> and open their details panel</li>
             <li><kbd>Click</kbd> empty floor: close the panel</li>
+            <li><kbd>Drag</kbd> a report or reply from the panel onto another agent to hand it off 🤝</li>
           </ul>
           <h3>Keyboard</h3>
           <ul class="keys">
             <li><kbd>?</kbd> this help</li>
             <li><kbd>N</kbd> hire a new agent (new session)</li>
+            <li><kbd>M</kbd> daily standup in the meeting room</li>
+            <li><kbd>T</kbd> replay the last 24 hours (<kbd>Space</kbd> play / pause)</li>
             <li><kbd>D</kbd> office dashboard (costs, employees, leaderboard, settings)</li>
             <li><kbd>S</kbd> show / hide offline agents</li>
             <li><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> cycle through agents</li>
@@ -237,6 +246,36 @@
       </div>
       <div class="row"><button class="primary" data-close>Got it</button></div>
     </div>
+  </div>
+
+  <div id="handoffModal" class="modal" hidden>
+    <form id="handoffForm" class="card">
+      <h2>🤝 Hand off</h2>
+      <p id="handoffFrom" class="muted small"></p>
+      <label>To <select name="target" id="handoffTarget"></select></label>
+      <label>Their first task <textarea name="prompt" rows="9"></textarea></label>
+      <fieldset class="mode">
+        <legend>How</legend>
+        <label class="inline"><input type="radio" name="mode" value="resume"> <span id="handoffResumeLabel">Continue their session (they keep their memory)</span></label>
+        <label class="inline"><input type="radio" name="mode" value="new" checked> <span id="handoffNewLabel">New session in their project, with their personality</span></label>
+      </fieldset>
+      <div class="row"><button type="submit" class="primary">Hand off &amp; open terminal</button><button type="button" class="ghost" data-close>Cancel</button></div>
+    </form>
+  </div>
+
+  <div id="timeline" class="timeline" hidden>
+    <span class="tl-badge">⏪ REPLAY</span>
+    <button id="tlPlay" title="Play / pause (space)">⏸</button>
+    <div class="tl-track"><canvas id="tlSpark" height="28"></canvas><input type="range" id="tlRange" min="0" max="1000" value="0"></div>
+    <span id="tlTime" class="tl-time"></span>
+    <select id="tlSpeed" title="Replay speed"><option value="60">1 min / s</option><option value="300" selected>5 min / s</option><option value="900">15 min / s</option><option value="3600">1 hour / s</option></select>
+    <button id="tlLive" class="primary">Back to live</button>
+  </div>
+
+  <div id="standupCard" class="floating-card" hidden>
+    <div class="fc-head"><b>🧍 Daily standup</b><span id="standupTime" class="muted small"></span><button class="icon" id="standupClose" title="End standup">✕</button></div>
+    <div id="standupText" class="md"></div>
+    <div class="row"><button id="standupCopy">Copy</button><button id="standupAgain">↻ Run again</button><button id="standupEnd" class="primary">End standup</button></div>
   </div>
 
   <div id="toast" hidden></div>

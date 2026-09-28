@@ -8,7 +8,7 @@ import os from 'node:os';
 import { spawn, execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS } from './demo.mjs';
+import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline } from './demo.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -19,7 +19,14 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const PERSONALITIES_FILE = path.join(ROOT, 'data', 'personalities.json');
 const HIDDEN_FILE = path.join(ROOT, 'data', 'hidden.json');
 const REPORTS_DIR = path.join(ROOT, 'data', 'reports');
-const TERMINAL = process.env.OFFICE_TERMINAL || (process.env.TERM_PROGRAM === 'iTerm.app' ? 'iTerm' : 'Terminal');
+// Which terminal opens sessions. macOS: iTerm or Terminal. Linux: the first one found of
+// gnome-terminal, kitty, konsole, alacritty, wezterm, xfce4-terminal, xterm. OFFICE_TERMINAL overrides.
+const LINUX_TERMINALS = ['gnome-terminal', 'kitty', 'konsole', 'alacritty', 'wezterm', 'xfce4-terminal', 'xterm'];
+const onPath = bin => (process.env.PATH || '').split(path.delimiter).some(d => d && fs.existsSync(path.join(d, bin)));
+const TERMINAL = process.env.OFFICE_TERMINAL
+  || (process.platform === 'darwin'
+    ? (process.env.TERM_PROGRAM === 'iTerm.app' ? 'iTerm' : 'Terminal')
+    : LINUX_TERMINALS.find(onPath) || 'xterm');
 const MAX_DAYS = Number(process.env.MAX_DAYS || 14);
 const MAX_ROOMS = Number(process.env.MAX_ROOMS || 20);
 const DEMO = process.env.DEMO === '1' || process.argv.includes('--demo');
@@ -67,10 +74,14 @@ async function parseTranscript(file) {
     // gamification counters
     promptCount: 0, toolCount: 0, testRuns: 0, reads: 0, webCalls: 0, subagentsSpawned: 0,
     nightOwl: false, workMs: 0, context: 0, peakContext: 0,
+    turns: [], events: [], // for the timeline: [start, end] of each turn, and [time, label] of each action
   };
   // work time = for each turn, time from your prompt to Claude's last message in that turn
   let turnStart = null, turnEnd = null;
-  const closeTurn = () => { if (turnStart && turnEnd > turnStart) s.workMs += Math.min(turnEnd - turnStart, 2 * 3600e3); turnStart = turnEnd = null; };
+  const closeTurn = () => {
+    if (turnStart && turnEnd > turnStart) { s.workMs += Math.min(turnEnd - turnStart, 2 * 3600e3); s.turns.push([turnStart, Math.min(turnEnd, turnStart + 2 * 3600e3)]); }
+    turnStart = turnEnd = null;
+  };
   for (const line of raw.split('\n')) {
     if (!line) continue;
     let d;
@@ -112,6 +123,7 @@ async function parseTranscript(file) {
           if (c.type === 'text' && c.text?.trim()) {
             s.replies.push({ at: d.timestamp, text: c.text.slice(0, 2000) });
             s.lastActivity = { at: d.timestamp, label: 'Talking' };
+            if (d.timestamp) s.events.push([Date.parse(d.timestamp), 'Talking']);
           } else if (c.type === 'tool_use') {
             s.tools[c.name] = (s.tools[c.name] || 0) + 1;
             s.toolCount++;
@@ -122,6 +134,7 @@ async function parseTranscript(file) {
             const fp = c.input?.file_path;
             if (fp && ['Edit', 'Write', 'MultiEdit'].includes(c.name)) s.files[fp] = (s.files[fp] || 0) + 1;
             s.lastActivity = { at: d.timestamp, label: describeTool(c.name, c.input) };
+            if (d.timestamp) s.events.push([Date.parse(d.timestamp), s.lastActivity.label]);
           }
         }
         s.messageCount++;
@@ -130,6 +143,7 @@ async function parseTranscript(file) {
     }
   }
   closeTurn();
+  s.events = s.events.slice(-4000);
   s.prompts = s.prompts.slice(-15);
   s.replies = s.replies.slice(-8);
   s.files = Object.entries(s.files).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f, n]) => ({ path: f, edits: n }));
@@ -398,8 +412,21 @@ function setHidden(id, hide) {
 const shq = v => `'${String(v).replace(/'/g, `'\\''`)}'`;
 const asq = v => String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
-// Opens a new terminal window running `command` (iTerm or Terminal.app).
+// Opens a new terminal window running `command`: iTerm or Terminal.app on macOS, a Linux terminal elsewhere.
 function openTerminal(command) {
+  if (process.platform !== 'darwin') {
+    // keep the window open after claude exits, so you can read what happened
+    const shell = ['bash', '-lc', `${command}; exec bash`];
+    const argv = {
+      'gnome-terminal': ['--', ...shell], kitty: shell, konsole: ['-e', ...shell], alacritty: ['-e', ...shell],
+      wezterm: ['start', '--', ...shell], 'xfce4-terminal': ['-x', ...shell], xterm: ['-e', ...shell],
+    }[TERMINAL] || ['-e', ...shell];
+    return new Promise((resolve, reject) => {
+      const child = spawn(TERMINAL, argv, { detached: true, stdio: 'ignore' });
+      child.on('error', e => reject(new Error(`could not start ${TERMINAL}: ${e.message}. Set OFFICE_TERMINAL to your terminal.`)));
+      child.on('spawn', () => { child.unref(); resolve(); });
+    });
+  }
   const script = TERMINAL === 'iTerm'
     ? `tell application "iTerm"
          activate
@@ -497,11 +524,20 @@ function askAgent(detail, question, mode, persona, res) {
   const args = deep
     ? ['-p', prompt, '--resume', detail.id, '--fork-session', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream]
     : ['-p', prompt, '--model', process.env.ASK_MODEL || 'haiku', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream];
-  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd: deep ? detail.cwd || os.homedir() : os.tmpdir(), env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' });
+  streamClaude(args, res, {
+    cwd: deep ? detail.cwd || os.homedir() : os.tmpdir(),
+    timeoutMs: (deep ? 5 : 2) * 60e3,
+    timeoutNote: deep ? 'This session is large, so try Quick mode.' : '',
+  });
+}
 
+// Runs `claude -p ... --output-format stream-json --include-partial-messages` and streams the
+// answer's text to an HTTP response as plain text. stdin must be closed or claude waits on it.
+function streamClaude(args, res, { cwd, timeoutMs, timeoutNote = '' }) {
+  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' });
   let wrote = false, buf = '', err = '';
-  const timer = setTimeout(() => { child.kill(); res.end(`${wrote ? '\n\n' : ''}⏱️ No answer after ${deep ? 5 : 2} minutes, so I gave up. ${deep ? 'This session is large, so try Quick mode.' : ''}`); }, (deep ? 5 : 2) * 60e3);
+  const timer = setTimeout(() => { child.kill(); res.end(`${wrote ? '\n\n' : ''}⏱️ No answer after ${Math.round(timeoutMs / 60e3)} minutes, so I gave up. ${timeoutNote}`); }, timeoutMs);
   child.stdout.on('data', chunk => {
     buf += chunk;
     let i;
@@ -519,6 +555,32 @@ function askAgent(detail, question, mode, persona, res) {
   child.on('error', e => { clearTimeout(timer); res.end(`⚠️ Could not start claude: ${e.message}`); });
   child.on('close', code => { clearTimeout(timer); if (!res.writableEnded) res.end(code && !wrote ? `⚠️ claude exited with code ${code}. ${err.slice(0, 500)}` : ''); });
   res.on('close', () => { clearTimeout(timer); if (child.exitCode === null) child.kill(); });
+}
+
+// ---------- standup: yesterday / today / blockers across recent sessions ----------
+const STREAM_ARGS = ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
+async function standup(names, res) {
+  const since = Date.now() - 36 * 3600e3;
+  const list = (await listSessions()).filter(s => s.live || s.updatedAt >= since).slice(0, 16);
+  const clip = (t, n) => { t = String(t || '').replace(/\s+/g, ' '); return t.length > n ? `${t.slice(0, n)}…` : t; };
+  const briefs = [];
+  for (const s of list) {
+    const d = await sessionDetail(s.id);
+    if (!d) continue;
+    const recentPrompts = d.prompts.filter(p => Date.parse(p.at) >= since).slice(-4);
+    briefs.push([
+      `### ${names?.[s.id] || s.id.slice(0, 8)} (project: ${s.project})`,
+      `Session: ${s.title}. Status now: ${s.status}${s.activity ? ` (${s.activity})` : ''}${s.waitingFor ? `, waiting for: ${s.waitingFor}` : ''}. Last active: ${new Date(s.updatedAt).toLocaleString()}.`,
+      recentPrompts.length ? `Asked recently: ${recentPrompts.map(p => clip(p.text, 220)).join(' | ')}` : '',
+      d.replies.length ? `Latest replies: ${d.replies.slice(-2).map(r => clip(r.text, 500)).join(' | ')}` : '',
+      d.report ? `Report handed in: ${clip(d.report.result, 600)}` : '',
+    ].filter(Boolean).join('\n'));
+  }
+  if (!briefs.length) { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Nobody worked in the last day and a half, so there is nothing to report. ☕'); }
+  const prompt = `You are running the daily standup of an office where every coworker is an AI coding session. Here is what each of them did recently:\n\n${briefs.join('\n\n')}\n\n` +
+    'Write the standup in markdown. For each coworker, one short block: **Name** (project), then "Yesterday:", "Today:" and "Blockers:" lines (write "none" if there are none; things waiting for the user, failing tests or open questions count as blockers). ' +
+    'Be concrete, one line each, no filler. End with a "## Needs your attention" list of the most important blockers across the office (at most 5), or "Nothing, great work." Do not invent work that is not in the notes.';
+  streamClaude(['-p', prompt, '--model', process.env.STANDUP_MODEL || process.env.ASK_MODEL || 'haiku', '--no-session-persistence', '--tools', '', ...STREAM_ARGS], res, { cwd: os.tmpdir(), timeoutMs: 3 * 60e3 });
 }
 
 // ---------- personality quirks (generated by Claude from the traits) ----------
@@ -560,6 +622,12 @@ async function demoRoute(url, req, res) {
     return res.end();
   }
   if (url.pathname === '/api/quirks') return json(res, 200, DEMO_QUIRKS);
+  if (url.pathname === '/api/timeline') return json(res, 200, demoTimeline(Number(url.searchParams.get('hours')) || 24));
+  if (url.pathname === '/api/standup') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    for (const word of DEMO_STANDUP.split(' ')) { res.write(`${word} `); await new Promise(r => setTimeout(r, 15)); }
+    return res.end();
+  }
   if (url.pathname === '/api/projects') return json(res, 200, ['/home/dev/code/pixel-shop', '/home/dev/code/api-gateway', '/home/dev/code/docs-site']);
   if (url.pathname === '/api/hidden') return json(res, 200, []);
   return json(res, 200, { ok: true, demo: true }); // new/open/end/hide are no-ops in the demo
@@ -599,9 +667,44 @@ const server = http.createServer(async (req, res) => {
       const { question, mode, persona } = await readBody(req);
       return askAgent(d, String(question || 'What are you working on and what do you think of it?'), mode, persona, res);
     }
+    if (req.method === 'POST' && url.pathname === '/api/handoff') {
+      // hand a report or reply to another agent: continue their session, or start a new one in their project
+      const { targetId, prompt, mode } = await readBody(req);
+      const d = await sessionDetail(targetId);
+      if (!d) return json(res, 404, { error: 'That agent no longer exists.' });
+      if (!prompt) return json(res, 400, { error: 'The handoff needs a task.' });
+      const p = d.personality || {};
+      const ws = p.impact !== false && p.workStyle ? ` --append-system-prompt ${shq(p.workStyle)}` : '';
+      if (mode === 'resume') {
+        if (d.status !== 'offline') return json(res, 409, { error: `${p.name || 'They'} already have a session open. Choose "new session", or paste the task into their terminal.` });
+        await openTerminal(`cd ${shq(d.cwd || os.homedir())} && claude --resume ${d.id}${ws} ${shq(prompt)}`);
+        return json(res, 200, { id: d.id });
+      }
+      const id = randomUUID();
+      const persona = { ...p, name: p.name ? `${p.name} II` : undefined, auto: false, pack: undefined, before: undefined };
+      await savePersonality(id, persona);
+      await openTerminal(`cd ${shq(d.cwd || os.homedir())} && claude --session-id ${id}${persona.name ? ` -n ${shq(persona.name)}` : ''}${ws} ${shq(prompt)}`);
+      return json(res, 200, { id });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/standup') return standup((await readBody(req)).names, res);
     if (req.method === 'POST' && url.pathname === '/api/quirks') {
       const { name, traits } = await readBody(req);
       return json(res, 200, await generateQuirks(name, traits));
+    }
+    if (url.pathname === '/api/timeline') {
+      // turns and actions of every listed session inside the window (default: last 24h)
+      const hours = Math.min(168, Number(url.searchParams.get('hours')) || 24);
+      const from = Date.now() - hours * 3600e3;
+      const out = [];
+      for (const ls of await listSessions()) {
+        const f = (await allTranscripts()).find(x => path.basename(x, '.jsonl') === ls.id);
+        if (!f) continue;
+        const t = await parseTranscript(f);
+        const turns = t.turns.filter(([a, b]) => b >= from);
+        if (!turns.length) continue;
+        out.push({ id: ls.id, turns, events: t.events.filter(([at]) => at >= from) });
+      }
+      return json(res, 200, { from, to: Date.now(), sessions: out });
     }
     if (url.pathname === '/api/hidden') return json(res, 200, await loadHidden());
     if (url.pathname === '/api/projects') return json(res, 200, await knownProjects());

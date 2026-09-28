@@ -1,4 +1,4 @@
-import { T, characterFrame, helperFrame, critterFrame, drawFloor, drawWall, FURNITURE } from './sprites.js';
+import { T, characterFrame, helperFrame, critterFrame, drawFloor, drawWall, FURNITURE, THEMES, setTheme } from './sprites.js';
 import { buildWorld, findPath, projectColor, EXEC_LEVEL } from './world.js';
 import { PRESETS, SKINS, HAIRS, SHIRTS, PANTS, HAIR_STYLES, personaFor, styleFor, assignUniqueNames, workStyleFor, ROLES, roleFor, PACKS, presetOptions, defaultPersona } from './personas.js';
 
@@ -12,7 +12,10 @@ const WORK_STATES = new Set(['busy', 'waiting']);
 // Between turns Claude Code reports "idle" while you read/type. Treat a recently-idle live
 // session as "your turn": the agent stays at their desk instead of wandering off.
 let YOUR_TURN_MS = 5 * 60 * 1000; // adjustable in dashboard settings
-const isYourTurn = s => s.live && s.status === 'idle' && Date.now() - (s.statusSince || 0) < YOUR_TURN_MS;
+const isYourTurn = s => s.live && s.status === 'idle' && officeNow() - (s.statusSince || 0) < YOUR_TURN_MS;
+// "now" for the office: the real clock, or the replay cursor while replaying
+function officeNow() { return replay.on ? replay.t : Date.now(); }
+const replay = { on: false, t: 0, playing: false, speed: 300, data: null, byId: new Map(), applyT: 0 };
 const displayStatus = s => (isYourTurn(s) ? 'your turn' : s.status);
 
 let allSessions = [];       // everything the server returned
@@ -33,8 +36,12 @@ let zoom = store.get('zoom', 0); // 0 = auto-fit
 let showOffline = store.get('showOffline', true);
 YOUR_TURN_MS = store.get('yourTurnMinutes', 5) * 60000;
 let crittersOn = store.get('critters', true);
+let themeKey = store.get('theme', 'classic');
+let lightingMode = store.get('lighting', 'auto'); // auto (follows your clock) | day | night
+setTheme(themeKey);
 let time = 0;
 let firstLoad = true;
+const standup = { on: false, text: '', running: false };
 let employeeOfMonth = null;
 
 let BADGES = {};             // achievement id -> {icon, name, hint}
@@ -50,13 +57,14 @@ async function refresh() {
   assignUniqueNames(fresh);
   persistDefaults(fresh);
   allSessions = fresh;
-  const visible = fresh.filter(s => showOffline || s.live || agents.get(s.id)?.leaving);
+  const visible = fresh.filter(s => showOffline || replay.on || s.live || agents.get(s.id)?.leaving);
   // the layout changes when the set of agents changes or someone moves into a private office
   const layoutKey = list => list.map(s => `${s.id}${(s.level || 1) >= EXEC_LEVEL ? '*' : ''}`).join();
   const changedSet = layoutKey(visible) !== layoutKey(sessions);
   sessions = visible;
   if (changedSet || !world) rebuild();
-  for (const s of sessions) agents.get(s.id)?.setSession(s);
+  if (replay.on) applyReplay();
+  else for (const s of sessions) agents.get(s.id)?.setSession(s);
   syncHelpers();
   const top = [...allSessions].sort((a, b) => (b.xp || 0) - (a.xp || 0))[0];
   employeeOfMonth = top?.xp ? top.id : null;
@@ -280,7 +288,8 @@ class Agent {
     // personality: every so often they mutter something in character
     this.quipT -= dt;
     if (this.quipT <= 0 && this.quip === null) {
-      const lines = this.contextPct > 0.8 && this.working ? ['🥵 my head is full…', '🥵 maybe /compact?', '🥵 so… much… context'] : this.working ? this.style.work : this.style.idle;
+      const nightShift = darkness() > 0.5 && (this.session.badges || []).includes('nightowl') ? ['🦉 Night shift!', '🦉 Best hours to code', '🦉 Who needs sleep'] : [];
+      const lines = this.contextPct > 0.8 && this.working ? ['🥵 my head is full…', '🥵 maybe /compact?', '🥵 so… much… context'] : [...(this.working ? this.style.work : this.style.idle), ...nightShift];
       this.quip = choice(lines); this.quipT = 3;
     } else if (this.quipT <= 0) { this.quip = null; this.quipT = rand(10, 22); }
 
@@ -297,6 +306,11 @@ class Agent {
       return;
     }
     if (this.leaving) return this.leaveOffice();
+    // standup: everyone in the office goes to the meeting room, even people who are working
+    if (standup.on) {
+      if (this.task !== 'meeting') joinMeeting(this);
+      return;
+    }
     // work always pulls the agent to their desk
     if (this.working) {
       if (this.spot?.zone !== 'desk') this.goToDesk();
@@ -324,12 +338,13 @@ class Agent {
   statusText() {
     const label = this.baseStatus();
     const s = this.session;
-    const onBreakWaiting = s.live && s.status === 'idle' && !isYourTurn(s) && !this.away && !this.leaving && !this.thinking;
+    const onBreakWaiting = s.live && s.status === 'idle' && !isYourTurn(s) && !this.away && !this.leaving && !this.thinking && this.task !== 'meeting';
     return onBreakWaiting ? `${label} · waiting for you` : label;
   }
 
   baseStatus() {
     const s = this.session;
+    if (this.task === 'meeting') return this.path.length ? '🚶 Heading to the standup' : '🧍 In the standup';
     if (this.away) return '🌴 Out of office';
     if (this.leaving) return '👋 Heading home';
     if (this.thinking) return '💭 Answering your question';
@@ -363,6 +378,10 @@ class Agent {
 
   bubbleText() {
     if (this.thinking) return '💭 …';
+    if (this.task === 'meeting' && !this.path.length) {
+      const turn = Math.floor(time / 3.5 + this.room.index * 1.7) % 5;
+      return turn === 0 ? `🗣️ ${this.session.title}` : turn === 2 && this.session.status === 'waiting' ? '🙋 I\'m blocked' : null;
+    }
     if (this.quip && this.quipT < 0) return this.quip; // level-up banner
     const s = this.session;
     const atDesk = !this.path.length;
@@ -461,6 +480,193 @@ function updateEffects(dt) {
   for (const p of particles) { p.vy += 90 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
   particles = particles.filter(p => p.life > 0);
 }
+
+// ---------------- timeline & replay ----------------
+function simulateAt(s, t) {
+  const tl = replay.byId.get(s.id);
+  const base = { ...s, helpers: [], waitingFor: null, runState: null, activity: null };
+  if (!tl) return { ...base, live: false, status: 'offline' };
+  const cur = tl.turns.find(([a, b]) => a <= t && t <= b);
+  if (cur) {
+    let ev = null;
+    for (const e of tl.events) { if (e[0] > t) break; ev = e; }
+    return { ...base, live: true, status: 'busy', statusSince: cur[0], activity: ev?.[1] || 'Talking' };
+  }
+  let ended = null;
+  for (const turn of tl.turns) if (turn[1] <= t) ended = turn;
+  if (ended && t - ended[1] < 45 * 60e3) return { ...base, live: true, status: 'idle', statusSince: ended[1] };
+  return { ...base, live: false, status: 'offline' };
+}
+function applyReplay() {
+  for (const s of sessions) agents.get(s.id)?.setSession(simulateAt(s, replay.t));
+  updateTimelineUI();
+  renderStats();
+}
+function tickReplay(dt) {
+  if (replay.playing) {
+    replay.t = Math.min(replay.data.to, replay.t + dt * replay.speed * 1000);
+    if (replay.t >= replay.data.to) replay.playing = false;
+  }
+  replay.applyT -= dt;
+  if (replay.applyT <= 0) { replay.applyT = 0.2; applyReplay(); }
+}
+function updateTimelineUI() {
+  const { from, to } = replay.data;
+  $('#tlRange').value = String(Math.round((replay.t - from) / (to - from) * 1000));
+  const busy = sessions.filter(s => simulateAt(s, replay.t).status === 'busy').length;
+  $('#tlTime').textContent = `${new Date(replay.t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} · ${busy} working`;
+  $('#tlPlay').textContent = replay.playing ? '⏸' : '▶';
+}
+function drawSparkline() {
+  const c = $('#tlSpark'), { from, to } = replay.data;
+  c.width = c.clientWidth * (window.devicePixelRatio || 1); c.height = 28 * (window.devicePixelRatio || 1);
+  const g = c.getContext('2d'), n = 240, counts = new Array(n).fill(0);
+  for (const s of replay.data.sessions) for (const [a, b] of s.turns) {
+    for (let i = Math.max(0, Math.floor((a - from) / (to - from) * n)); i <= Math.min(n - 1, Math.floor((b - from) / (to - from) * n)); i++) counts[i]++;
+  }
+  const max = Math.max(1, ...counts), w = c.width / n;
+  g.fillStyle = '#4cd96499';
+  counts.forEach((v, i) => { const h = v / max * (c.height - 4); g.fillRect(i * w, c.height - h, Math.max(1, w - 0.5), h); });
+}
+async function startReplay() {
+  try { replay.data = await (await fetch('/api/timeline?hours=24')).json(); } catch { replay.data = null; }
+  if (!replay.data?.sessions) return toast('Could not load the timeline.');
+  if (!replay.data.sessions.length) return toast('Nothing happened in the last 24 hours, so there is nothing to replay.');
+  replay.byId = new Map(replay.data.sessions.map(s => [s.id, s]));
+  const first = Math.min(...replay.data.sessions.flatMap(s => s.turns.map(t => t[0])), replay.data.to);
+  replay.t = Math.max(replay.data.from, first - 10 * 60e3);
+  replay.on = true; replay.playing = true; replay.applyT = 0;
+  if (standup.on) endStandup();
+  document.body.classList.add('replaying');
+  $('#timeline').hidden = false;
+  await refresh();
+  drawSparkline();
+  applyReplay();
+  toast('⏪ Replaying the last 24 hours. Drag the timeline to jump around.');
+}
+function stopReplay() {
+  replay.on = false; replay.playing = false;
+  document.body.classList.remove('replaying');
+  $('#timeline').hidden = true;
+  refresh();
+}
+$('#replayBtn').onclick = () => (replay.on ? stopReplay() : startReplay());
+$('#tlLive').onclick = stopReplay;
+$('#tlPlay').onclick = () => { if (replay.t >= replay.data.to) replay.t = replay.data.from; replay.playing = !replay.playing; updateTimelineUI(); };
+$('#tlSpeed').onchange = e => { replay.speed = Number(e.target.value); };
+$('#tlRange').oninput = e => {
+  const { from, to } = replay.data;
+  replay.t = from + (to - from) * Number(e.target.value) / 1000;
+  applyReplay();
+};
+window.addEventListener('resize', () => { if (replay.on) drawSparkline(); });
+
+// ---------------- handoffs ----------------
+let dragHandoff = null;
+document.addEventListener('dragend', () => { canvas.classList.remove('drop-target'); });
+canvas.addEventListener('dragover', e => {
+  if (!dragHandoff) return;
+  e.preventDefault();
+  const a = agentAt(e);
+  hoverId = a && a.id !== dragHandoff.from ? a.id : null;
+});
+canvas.addEventListener('drop', e => {
+  if (!dragHandoff) return;
+  e.preventDefault();
+  canvas.classList.remove('drop-target');
+  const a = agentAt(e), h = dragHandoff;
+  dragHandoff = null;
+  if (a && a.id !== h.from) openHandoff(h.from, a.id, h.text);
+  else toast('Drop it on another agent to hand it off.');
+});
+
+function openHandoff(fromId, toId, text) {
+  const from = agents.get(fromId) || { persona: personaFor(allSessions.find(s => s.id === fromId) || { id: fromId }), session: allSessions.find(s => s.id === fromId) || {} };
+  const f = $('#handoffForm');
+  const role = roleFor(from.persona.role);
+  const targets = [...allSessions].filter(s => s.id !== fromId).map(s => ({ s, p: personaFor(s) }));
+  $('#handoffTarget').innerHTML = targets.map(({ s, p }) => `<option value="${s.id}">${escapeHtml(p.name)} · ${escapeHtml(s.project)}${s.live ? ' (session open)' : ''}</option>`).join('');
+  if (toId) f.target.value = toId;
+  $('#handoffFrom').textContent = `From ${from.persona.name}${role ? `, ${role.label}` : ''} (${from.session.project || ''}).`;
+  const fill = () => {
+    const t = allSessions.find(s => s.id === f.target.value), tp = t && personaFor(t);
+    if (!t) return;
+    f.prompt.value = `Handoff from ${from.persona.name}${role ? ` (${role.label})` : ''}:\n\n${text}\n\nPlease take it from here: fix what's described above in ${t.project}, run the relevant tests, and tell me what you changed.`;
+    const canResume = !t.live;
+    f.querySelector('input[value=resume]').disabled = !canResume;
+    $('#handoffResumeLabel').textContent = canResume ? `Continue ${tp.name}'s session (they keep their memory)` : `Continue ${tp.name}'s session (not possible: their session is already open)`;
+    $('#handoffNewLabel').textContent = `New session in ${t.project} as ${tp.name} II, with their personality`;
+    f.mode.value = canResume ? 'resume' : 'new';
+  };
+  f.target.onchange = fill;
+  fill();
+  $('#handoffModal').hidden = false;
+}
+$('#handoffForm').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  const t = allSessions.find(s => s.id === f.target.value);
+  try {
+    await post('/api/handoff', { targetId: f.target.value, prompt: f.prompt.value.trim(), mode: f.mode.value });
+    $('#handoffModal').hidden = true;
+    const a = agents.get(f.target.value);
+    if (a && !a.away) { a.quip = '🤝 On it!'; a.quipT = -4; a.celebrateT = 2; }
+    toast(`🤝 Handed off to <b>${escapeHtml(personaFor(t).name)}</b>. Check ${escapeHtml(config.terminal)}.`);
+    setTimeout(refresh, 1500);
+  } catch (err) { toast(`Could not hand off: ${escapeHtml(err.message)}`); }
+};
+
+// ---------------- standup ----------------
+function joinMeeting(a) {
+  const seat = world.spots.find(sp => sp.meeting && !sp.takenBy) || null;
+  if (seat && a.goTo(seat, seat, 'meeting')) return;
+  a.task = 'meeting'; // no free seat: stand where you are and listen in
+}
+async function startStandup() {
+  if (!world) return;
+  standup.on = true;
+  for (const a of agents.values()) if (!a.away && a.task !== 'meeting') joinMeeting(a);
+  const m = world.meeting, s = scale();
+  viewport.scrollTo({ top: (m.y0 - 4) * T * s, behavior: 'smooth' });
+  $('#standupCard').hidden = false;
+  runStandupSummary();
+}
+async function runStandupSummary() {
+  if (standup.running) return;
+  standup.running = true;
+  const box = $('#standupText');
+  box.classList.add('thinking');
+  box.textContent = 'Everyone is heading to the meeting room… collecting yesterday, today and blockers.';
+  $('#standupTime').textContent = new Date().toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  const started = Date.now();
+  const tick = setInterval(() => { if (box.classList.contains('thinking')) box.textContent = `Collecting notes from everyone… ${Math.round((Date.now() - started) / 1000)}s`; }, 1000);
+  try {
+    const names = Object.fromEntries(allSessions.map(s => [s.id, personaFor(s).name]));
+    const res = await fetch('/api/standup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ names }) });
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let text = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += dec.decode(value, { stream: true });
+      box.classList.remove('thinking');
+      box.innerHTML = md(text);
+    }
+    standup.text = text;
+  } catch (e) { box.classList.remove('thinking'); box.textContent = `⚠️ ${e.message}`; }
+  clearInterval(tick);
+  standup.running = false;
+}
+function endStandup() {
+  standup.on = false;
+  $('#standupCard').hidden = true;
+  for (const a of agents.values()) if (a.task === 'meeting') { a.release(); a.task = null; a.path = []; a.timer = rand(0, 2); }
+}
+$('#standupBtn').onclick = () => (standup.on ? endStandup() : startStandup());
+$('#standupEnd').onclick = endStandup;
+$('#standupClose').onclick = endStandup;
+$('#standupAgain').onclick = runStandupSummary;
+$('#standupCopy').onclick = () => standup.text && copy(standup.text);
 
 // ---------------- easter eggs: the Matrix ----------------
 const matrix = { on: false, rain: null, rainCtx: null, drops: [], smithT: 25, clones: new Map() };
@@ -600,6 +806,45 @@ function dunderMifflin() {
 console.log('%cWake up, Neo…', 'color:#00ff66;background:#000;font:16px monospace;padding:6px 10px');
 console.log('%cThe Matrix has you. Follow the white rabbit. (try typing "matrix" on the office)', 'color:#00ff66;background:#000;font:12px monospace;padding:4px 10px');
 
+// ---------------- day & night ----------------
+// 0 = broad daylight, 1 = deep night. "auto" follows the real clock: dusk 17-20h, dawn 6-8h.
+function darkness() {
+  if (lightingMode === 'day') return 0;
+  if (lightingMode === 'night') return 1;
+  const d = new Date(), h = d.getHours() + d.getMinutes() / 60;
+  if (h >= 20 || h < 6) return 1;
+  if (h >= 17) return (h - 17) / 3;
+  if (h < 8) return 1 - (h - 6) / 2;
+  return 0;
+}
+function drawLighting(s) {
+  const dark = darkness();
+  if (dark <= 0.02) return;
+  const w = canvas.width, h = canvas.height;
+  ctx.save();
+  // tint the whole office towards a cool night blue
+  const k = 1 - 0.62 * dark;
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = `rgb(${Math.round(255 * k * 0.8 + 40 * (1 - k))}, ${Math.round(255 * k * 0.85 + 50 * (1 - k))}, ${Math.round(255 * k + 110 * (1 - k))})`;
+  ctx.fillRect(0, 0, w, h);
+  // light pools: lamps (warm), busy monitors (cool), the elevator light
+  ctx.globalCompositeOperation = 'lighter';
+  const glow = (x, y, r, color, a) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, color.replace('A', (a * dark).toFixed(3))); g.addColorStop(1, color.replace('A', '0'));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  };
+  for (const o of world.objects) {
+    if (o.type === 'lamp') glow((o.x + 0.5) * T * s, (o.y - 0.4) * T * s, 3.2 * T * s, 'rgba(255,200,110,A)', 0.35);
+    if (o.type === 'desk' && !o.empty) {
+      const owner = agents.get(world.rooms[o.room]?.session?.id);
+      if (owner && !owner.away && owner.session.status === 'busy') glow((o.x + 0.5) * T * s, (o.y - 0.4) * T * s, 1.6 * T * s, 'rgba(110,190,255,A)', 0.38);
+    }
+    if (o.type === 'tv' || o.type === 'arcade') glow((o.x + o.w / 2) * T * s, o.y * T * s, 2 * T * s, 'rgba(180,120,255,A)', 0.22);
+  }
+  ctx.restore();
+}
+
 // ---------------- rendering ----------------
 function scale() {
   if (zoom) return zoom;
@@ -622,6 +867,8 @@ function render() {
   const g = bctx;
   g.drawImage(staticLayer, 0, 0);
 
+  const night = darkness() > 0.5;
+  for (const o of world.objects) if (o.type === 'window') o.night = night;
   // furniture that sits under characters
   for (const o of world.objects) if (o.under) FURNITURE[o.type](g, o.x * T, o.y * T, o, time);
 
@@ -661,6 +908,7 @@ function render() {
   ctx.imageSmoothingEnabled = false;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(buffer, 0, 0, buffer.width * s, buffer.height * s);
+  drawLighting(s);
   if (matrix.on) drawRain(Math.max(10, Math.round(s * 5.2)), window.devicePixelRatio || 1);
   drawOverlay(s);
 }
@@ -747,6 +995,11 @@ function drawOverlay(s) {
   const sorted = [...agents.values()].filter(a => !a.away).sort((p, q) => p.y - q.y);
   for (const a of sorted) {
     const cx = (a.x * T + 8) * s, top = (a.y * T - 12) * s;
+    if (darkness() > 0.5 && (a.session.badges || []).includes('nightowl') && a.id !== employeeOfMonth) {
+      ctx.font = `${Math.round(fs * 1.05)}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText('🦉', cx, (a.y * T - 13) * s + (a.currentPose() === 'sit' || a.currentPose() === 'type' ? 3 * s : 0));
+      ctx.textAlign = 'left';
+    }
     if (a.id === employeeOfMonth) {
       ctx.font = `${Math.round(fs * 1.1)}px sans-serif`; ctx.textAlign = 'center';
       ctx.fillText('👑', cx, (a.y * T - 13) * s + (a.currentPose() === 'sit' || a.currentPose() === 'type' ? 3 * s : 0));
@@ -788,6 +1041,7 @@ function loop(now) {
     const a = agents.get(selectedId);
     if (a) $('#pDoing').textContent = a.statusText();
   }
+  if (replay.on) tickReplay(dt);
   if (world) { for (const a of agents.values()) a.update(dt); for (const h of helpers.values()) h.update(dt); updateEffects(dt); updateMatrix(dt); updateCritters(dt); render(); }
   requestAnimationFrame(loop);
 }
@@ -935,8 +1189,8 @@ function renderWork() {
   const rep = d.report, role = roleFor(d.personality?.role);
   const reportHtml = d.runState === 'running'
     ? `<h3>📋 Report</h3><p class="muted small">${role ? role.icon : '🏢'} Working on it in the background… the report appears here when they're done.</p>`
-    : rep ? `<div class="report-head"><h3>📋 Report${role ? ` · ${role.icon} ${escapeHtml(role.label)}` : ''}</h3><button class="small" id="copyReport">Copy</button></div>
-      <div class="report md ${rep.ok ? '' : 'failed'}">${md(rep.result)}</div>
+    : rep ? `<div class="report-head"><h3>📋 Report${role ? ` · ${role.icon} ${escapeHtml(role.label)}` : ''}</h3><span><button class="handoff-btn" data-handoff="report" title="Give this report to another agent">🤝 Hand off</button> <button class="small" id="copyReport">Copy</button></span></div>
+      <div class="report md ${rep.ok ? '' : 'failed'}" draggable="true" data-drag="report" title="Drag onto another agent to hand it off">${md(rep.result)}</div>
       <div class="muted small">${rep.ok ? 'Finished' : 'Failed'} ${ago(rep.endedAt)} · ${fmtDuration(rep.endedAt - rep.startedAt)} · $${(rep.cost || 0).toFixed(2)}. Ask follow-ups in the Ask tab, or open them in a terminal to continue.</div>`
     : '';
   $('#tab-work').innerHTML = `
@@ -966,7 +1220,7 @@ function renderWork() {
     </div>
     ${d.prs.length ? `<h3>Pull requests</h3>${d.prs.map(p => `<div><a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.repo)} #${p.number}</a></div>`).join('')}` : ''}
     <h3>Latest thoughts</h3>
-    ${replies.map(r => `<div class="item md"><time>${ago(r.at)}</time>${md(r.text)}</div>`).join('') || '<p class="muted">Nothing yet.</p>'}
+    ${replies.map((r, i) => `<div class="item md" draggable="true" data-drag="reply" data-i="${i}" title="Drag onto another agent to hand it off"><time>${ago(r.at)}${i === 0 ? ' · <button class="handoff-btn" data-handoff="reply" data-i="0">🤝 Hand off</button>' : ''}</time>${md(r.text)}</div>`).join('') || '<p class="muted">Nothing yet.</p>'}
     <h3>What you asked</h3>
     ${prompts.map(r => `<div class="item"><time>${ago(r.at)}</time>${escapeHtml(r.text)}</div>`).join('') || '<p class="muted">No prompts.</p>'}
     ${d.files.length ? `<h3>Files touched</h3><ul class="files">${d.files.map(f => `<li title="${escapeHtml(f.path)}">${escapeHtml(f.path.replace(d.cwd + '/', ''))} <span>×${f.edits}</span></li>`).join('')}</ul>` : ''}
@@ -974,6 +1228,15 @@ function renderWork() {
     ${d.model ? `<h3>Brain</h3><div class="muted small">${escapeHtml(d.model)}</div>` : ''}`;
   const cr = $('#copyReport');
   if (cr) cr.onclick = () => copy(rep.result);
+  // handoffs: button or drag onto an agent in the office
+  const handoffText = el => (el.dataset.handoff === 'report' || el.dataset.drag === 'report' ? rep.result : replies[Number(el.dataset.i) || 0]?.text);
+  document.querySelectorAll('#tab-work [data-handoff]').forEach(b => b.onclick = e => { e.stopPropagation(); openHandoff(d.id, null, handoffText(b)); });
+  document.querySelectorAll('#tab-work [data-drag]').forEach(el => el.addEventListener('dragstart', e => {
+    dragHandoff = { from: d.id, text: handoffText(el) };
+    e.dataTransfer.setData('text/plain', dragHandoff.text);
+    e.dataTransfer.effectAllowed = 'copy';
+    canvas.classList.add('drop-target');
+  }));
 }
 
 // tabs
@@ -1089,7 +1352,8 @@ $('#personaForm').onsubmit = async e => {
 
 // ---------------- chrome ----------------
 function renderStats() {
-  const count = st => allSessions.filter(s => displayStatus(s) === st).length;
+  const list = replay.on && replay.data ? sessions.map(s => simulateAt(s, replay.t)) : allSessions;
+  const count = st => list.filter(s => displayStatus(s) === st).length;
   $('#stats').innerHTML = ['busy', 'waiting', 'your turn', 'idle', 'offline']
     .map(st => `<span><span class="dot" style="background:${STATUS_COLOR[st]}"></span>${count(st)} ${st}</span>`).join('');
   if (!$('#board').hidden && boardTab !== 'settings') renderBoard();
@@ -1225,6 +1489,8 @@ function renderSettings() {
   $('#setOffline').checked = showOffline;
   $('#setMatrix').checked = matrix.on;
   $('#setCritters').checked = crittersOn;
+  $('#setTheme').value = themeKey;
+  $('#setLighting').value = lightingMode;
   $('#setYourTurn').value = String(YOUR_TURN_MS / 60000);
   $('#setInfo').innerHTML = `Terminal: <b>${escapeHtml(config.terminal)}</b> · showing sessions from the last <b>${config.maxDays}</b> days (max <b>${config.maxRooms}</b>). Change with <code>MAX_DAYS</code>, <code>MAX_ROOMS</code> and <code>OFFICE_TERMINAL</code> when starting the server.`;
 }
@@ -1246,6 +1512,9 @@ document.querySelectorAll('#boardTabs button').forEach(b => b.onclick = () => sh
 $('#boardBtn').onclick = () => openBoard();
 $('#setOffline').onchange = e => setShowOffline(e.target.checked);
 $('#setMatrix').onchange = e => setMatrix(e.target.checked);
+$('#setTheme').innerHTML = Object.entries(THEMES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('');
+$('#setTheme').onchange = e => { themeKey = e.target.value; store.set('theme', themeKey); setTheme(themeKey); rebuild(); };
+$('#setLighting').onchange = e => { lightingMode = e.target.value; store.set('lighting', lightingMode); };
 $('#setCritters').onchange = e => { crittersOn = e.target.checked; store.set('critters', crittersOn); if (!crittersOn) critters = []; };
 $('#setYourTurn').onchange = e => { YOUR_TURN_MS = Number(e.target.value) * 60000; store.set('yourTurnMinutes', Number(e.target.value)); refresh(); };
 $('#setUnhide').onclick = async () => { await post('/api/hide/', { hide: false }); toast('All hidden cubicles are back.'); refresh(); };
@@ -1431,25 +1700,34 @@ document.addEventListener('keydown', e => {
   if (e.key === '?') { e.preventDefault(); openHelp(); return; }
   if (modalOpen) return;
   const k = e.key.toLowerCase();
-  if (k === 'n') { e.preventDefault(); openNew(); }
-  else if (e.key === 'Tab') { e.preventDefault(); cycle(e.shiftKey ? -1 : 1); }
-  else if (k === 'd') openBoard();
-  else if (k === 's') setShowOffline(!showOffline);
-  else if (e.key === '+' || e.key === '=') $('#zoomIn').click();
-  else if (e.key === '-') $('#zoomOut').click();
-  else if (e.key === '0') setZoom(0);
-  else if (!selectedId) return;
-  else if (k === 'o') openInTerminal();
-  else if (k === 'c') $('#copyCmd').click();
-  else if (k === 'h') hideSelected();
-  else if (k === 'a') { e.preventDefault(); document.querySelector('.tabs [data-tab=ask]').click(); $('#askInput').focus(); }
+  if (e.key === 'Tab') { e.preventDefault(); cycle(e.shiftKey ? -1 : 1); return; }
+  if (e.key === ' ' && replay.on) { e.preventDefault(); $('#tlPlay').click(); return; }
+  if (e.key === '+' || e.key === '=') return $('#zoomIn').click();
+  if (e.key === '-') return $('#zoomOut').click();
+  if (e.key === '0') return setZoom(0);
+  const actions = {
+    n: () => openNew(), d: () => openBoard(), s: () => setShowOffline(!showOffline),
+    m: () => (standup.on ? endStandup() : startStandup()), t: () => (replay.on ? stopReplay() : startReplay()),
+    o: () => selectedId && openInTerminal(), c: () => selectedId && $('#copyCmd').click(), h: () => selectedId && hideSelected(),
+    a: () => { if (selectedId) { document.querySelector('.tabs [data-tab=ask]').click(); $('#askInput').focus(); } },
+  };
+  // Letter shortcuts wait a moment: if another letter follows quickly you're typing a word
+  // (like a cheat code), so the shortcut is cancelled.
+  if (/^[a-z]$/.test(k)) {
+    const now = performance.now(), typing = now - lastLetterAt < 350;
+    lastLetterAt = now;
+    clearTimeout(pendingShortcut);
+    if (typing || !actions[k]) return;
+    pendingShortcut = setTimeout(actions[k], 350);
+  }
 });
+let pendingShortcut = null, lastLetterAt = 0;
 window.addEventListener('resize', resize);
 
 // debug handle: office.step(30) fast-forwards the simulation 30 seconds
 window.office = {
   agents: () => [...agents.values()],
-  step(seconds) { for (let i = 0; i < seconds * 20; i++) { time += 0.05; for (const a of agents.values()) a.update(0.05); for (const h of helpers.values()) h.update(0.05); updateEffects(0.05); updateMatrix(0.05); updateCritters(0.05); } render(); },
+  step(seconds) { for (let i = 0; i < seconds * 20; i++) { time += 0.05; if (replay.on) tickReplay(0.05); for (const a of agents.values()) a.update(0.05); for (const h of helpers.values()) h.update(0.05); updateEffects(0.05); updateMatrix(0.05); updateCritters(0.05); } render(); },
   matrix: on => setMatrix(on), critter: kind => spawnCritter(kind),
 };
 

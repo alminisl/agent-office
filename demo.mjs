@@ -104,3 +104,49 @@ export const DEMO_QUIRKS = { emoji: '🎸', work: ['Rock on!', 'Shredding this b
 export function demoSavePersonalities(changes) {
   return Object.fromEntries(Object.entries(changes).map(([id, p]) => [id, demoSavePersonality(id, p)]));
 }
+
+export const DEMO_STANDUP = `**Frances** (api-gateway)
+Yesterday: ran the full test suite and wrote up 3 failures in the rate limiter.
+Today: waiting for a go-ahead to fix the clock injection.
+Blockers: needs your reply on the report.
+
+**Radia** (docs-site)
+Yesterday: started reviewing the two open docs PRs.
+Today: finishing the review of the auth guide.
+Blockers: none.
+
+**Ada** (pixel-shop)
+Yesterday: tracked down the flaky cart tests.
+Today: re-running the suite with the fix.
+Blockers: waiting for permission to run npm test.
+
+**Dennis** (ml-pipeline)
+Yesterday: designed the feature store backfill.
+Today: backfilling the first two weeks of data.
+Blockers: none.
+
+## Needs your attention
+- Approve Ada's npm test run (pixel-shop).
+- Reply to Frances' QA report (api-gateway).`;
+
+// A made-up day of work for the timeline replay: a few work sessions per agent over the last 12h.
+export function demoTimeline(hours = 24) {
+  const now = Date.now(), from = now - hours * 3600e3;
+  const sessions = demoSessions().map((s, i) => {
+    const h = hash(s.title);
+    const turns = [], events = [];
+    let t = now - (10 + (h % 3)) * 3600e3;
+    for (let k = 0; k < 4 + (h % 4); k++) {
+      const start = t + ((h >> k) % 60) * 60e3, len = (8 + ((h >> (k + 2)) % 40)) * 60e3;
+      if (start > now) break;
+      const end = Math.min(now, start + len);
+      turns.push([start, end]);
+      const labels = s.activity ? [s.activity, 'Talking', 'Reading README.md', '$ Run the test suite'] : ['Reading README.md', 'Talking', 'Editing src/index.ts'];
+      for (let e = start; e < end; e += 3 * 60e3) events.push([e, labels[(e / 60e3 + i) % labels.length | 0]]);
+      t = end + (20 + ((h >> (k + 4)) % 70)) * 60e3;
+    }
+    if (s.status === 'busy') turns.push([now - 15 * 60e3, now]);
+    return { id: s.id, turns, events };
+  }).filter(s => s.turns.length);
+  return { from, to: now, sessions };
+}

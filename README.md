@@ -13,8 +13,10 @@ It is a single zero-dependency Node server plus a canvas front end. Every sprite
 ### Office
 - Every recent Claude Code session gets its own cubicle, grouped by project (the coloured stripe on a nameplate marks the project).
 - Every nameplate shows a live **status line** saying what the agent is doing right now: "⌨️ Working: Editing Cart.tsx", "🙋 Needs you: approve npm test", "☕ Coffee break", "🏓 Playing ping pong", "👀 Checking on Pam", "🌴 Out of office" and so on.
-- A kitchen, gym, game room and lounge where agents spend their breaks.
+- A kitchen, gym, game room and lounge where agents spend their breaks, and a meeting room for standups.
 - Agents arrive and leave through the elevator.
+- **Themes**: Classic, Startup loft, Dunder Mifflin beige and Space station (Dashboard → Settings).
+- **Day and night**: lighting follows your clock. At night the office dims, lamps and busy monitors glow, and night-owl agents 🦉 take the night shift. You can also force day or night.
 - Zoom in and out, or fit the whole office to the window.
 
 ### Agents & status
@@ -43,6 +45,11 @@ Live status comes from `~/.claude/sessions`:
 - Hire a **PR Reviewer**, **QA Tester**, **Bug Hunter**, **Security Auditor** or **Docs Reviewer** from *New session*.
 - Run them interactively in a terminal, or **inside the office**: a background `claude -p` run with read-only tools that hands in a 📋 report, shown in the agent's panel.
 
+### Standups, handoffs and replay
+- **Daily standup** (<kbd>M</kbd>): everyone in the office walks to the meeting room, and a summary streams in with *Yesterday / Today / Blockers* for every agent active in the last 36 hours, ending with the things that need your attention.
+- **Handoffs**: drag a report (or a latest reply) from the panel onto another agent, or use 🤝 *Hand off*. You get an editable first task ("Bug Hunter found this, Dwight fix it"), and it opens in a terminal, either continuing the target's session (they keep their memory) or as a new session in their project with their personality.
+- **Timeline & replay** (<kbd>T</kbd>): replay the last 24 hours at 1 minute to 1 hour per second. Scrub along an activity graph and watch agents arrive, work, take breaks and leave, just as they did.
+
 ### Dashboard
 Press <kbd>D</kbd> for the office dashboard:
 - **Overview**: total spend, spend per hour of work, hands-on work time, lines changed, PRs, office motivation, spend and work time by project, who's working right now and who needs you.
@@ -54,7 +61,7 @@ Press <kbd>D</kbd> for the office dashboard:
   - **Work**: latest report, level, XP, context gauge, achievements, stats, latest replies, prompts and files touched.
   - **Ask**: ask the agent a question. ⚡ *Quick* answers in seconds from a briefing of the session; 🧠 *Deep memory* asks a forked copy of the full conversation. The real session is never touched.
   - **Personality**: name, preset, traits, hangout and look.
-- **New session**: opens iTerm or Terminal running `claude --session-id <new id>` in the chosen folder, with the personality and role pre-assigned.
+- **New session**: opens a terminal (iTerm or Terminal on macOS; gnome-terminal, kitty, konsole, alacritty, wezterm, xfce4-terminal or xterm on Linux) running `claude --session-id <new id>` in the chosen folder, with the personality and role pre-assigned.
 - **Open in terminal**: resume a session in a new terminal window.
 - **End session**: stops a running `claude` process with SIGTERM (two-step confirm; the transcript is kept).
 - **Hide**: remove a cubicle from the office (bring it back later from Settings).
@@ -79,6 +86,14 @@ Press <kbd>D</kbd> for the office dashboard:
   <tr>
     <td><img src="docs/new-agent.jpg" alt="Hire a new agent"><br><sub><b>Hire a new agent.</b> Pick a role, a personality and where they should work.</sub></td>
     <td><img src="docs/matrix.jpg" alt="Matrix mode"><br><sub><b>Matrix mode.</b> Follow the white rabbit.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/standup.jpg" alt="Daily standup"><br><sub><b>Daily standup.</b> Everyone in the meeting room, with yesterday, today and blockers.</sub></td>
+    <td><img src="docs/replay.jpg" alt="Timeline replay"><br><sub><b>Replay.</b> Scrub through the day and watch who worked when.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/night.jpg" alt="Night mode"><br><sub><b>Night shift.</b> Lighting follows your clock.</sub></td>
+    <td></td>
   </tr>
 </table>
 
@@ -130,8 +145,9 @@ All settings are optional environment variables:
 | `MAX_ROOMS` | `20` | Maximum number of cubicles |
 | `CLAUDE_DIR` | `~/.claude` | Where Claude Code keeps its data |
 | `CLAUDE_BIN` | `claude` | The Claude Code executable |
-| `OFFICE_TERMINAL` | `iTerm` if you run inside iTerm, else `Terminal` | Terminal app for New session / Open in terminal (`iTerm` or `Terminal`) |
+| `OFFICE_TERMINAL` | macOS: `iTerm` if you run inside iTerm, else `Terminal`. Linux: the first of gnome-terminal, kitty, konsole, alacritty, wezterm, xfce4-terminal, xterm found on your PATH | Terminal used by New session, Open in terminal and handoffs |
 | `ASK_MODEL` | `haiku` | Model used by Quick mode in the Ask tab |
+| `STANDUP_MODEL` | `ASK_MODEL` | Model that writes the standup summary |
 | `CONTEXT_WINDOW` | `200000` (or 1M for `[1m]` models) | Context window size used for the context bar |
 | `DEMO` | unset | Set to `1` for demo mode (same as `--demo`) |
 
@@ -144,6 +160,8 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 | <kbd>?</kbd> | Help |
 | <kbd>N</kbd> | New session (hire an agent) |
 | <kbd>D</kbd> | Office dashboard |
+| <kbd>M</kbd> | Daily standup |
+| <kbd>T</kbd> | Replay the last 24 hours (<kbd>Space</kbd> to play / pause) |
 | <kbd>S</kbd> | Show / hide offline agents |
 | <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> | Cycle through agents |
 | <kbd>O</kbd> | Open the selected agent in a terminal |
@@ -168,7 +186,7 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 
 - Node.js 18 or newer
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and used at least once (so `~/.claude` exists)
-- macOS for the terminal features (New session, Open in terminal), which use AppleScript to drive iTerm or Terminal. Everything else works wherever Node and Claude Code run.
+- For the terminal features (New session, Open in terminal, handoffs): macOS (iTerm or Terminal via AppleScript) or Linux (gnome-terminal, kitty, konsole, alacritty, wezterm, xfce4-terminal or xterm). Everything else works wherever Node and Claude Code run.
 
 ## Project structure
 
@@ -178,7 +196,7 @@ demo.mjs            Made-up agents and projects for demo mode
 public/
   index.html        UI shell: header, side panel, dialogs, dashboard, help
   app.js            Simulation, rendering, agents' behaviour, panel, dashboard, easter eggs
-  world.js          Office layout: cubicles, private offices, break rooms
+  world.js          Office layout: cubicles, private offices, break rooms, meeting room
   sprites.js        Procedurally drawn pixel-art characters and furniture
   personas.js       Personality presets, names, looks and quirks
   style.css         Styles
@@ -190,7 +208,7 @@ data/               Your personalities, hidden cubicles and reports (git-ignored
 
 Issues and pull requests are welcome. The project deliberately has no dependencies and no build step, so please keep it that way. Some ideas:
 
-- Linux and Windows terminal support for New session / Open in terminal
+- Windows terminal support for New session / Open in terminal
 - More personalities, break-room activities and achievements
 - More background roles
 - Sound effects (optional, off by default)
