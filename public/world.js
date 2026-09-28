@@ -64,7 +64,7 @@ export function buildWorld(sessions) {
       { type: 'beanbag', x: wl + 7, y: top + 4, w: 1, h: 1, under: true, color: '#8e44ad' });
     const seat = { id: `desk-${s.id}`, x: wl + 4, y: top + 1, dir: 'down', pose: 'sit', zone: 'desk', owner: s.id };
     const visit = { id: `visit-${s.id}`, x: wl + 4, y: top + 3, dir: 'up', pose: 'stand', zone: 'visit', owner: s.id, bubble: '👀', dur: [5, 10] };
-    const lounge = { id: `lounge-${s.id}`, x: wl + 7, y: top + 4, dir: 'down', pose: 'sit', zone: 'lounge', bubble: '📱', dur: [10, 20], nap: true };
+    const lounge = { id: `lounge-${s.id}`, x: wl + 7, y: top + 4, dir: 'down', pose: 'sit', zone: 'lounge', bubble: '📱', dur: [10, 20], nap: true, owner: s.id }; // only the office owner uses it
     spots.push(seat, visit, lounge);
     rooms.push({
       kind: 'office', index, session: s, x0: wl + 1, top: top + 1, seat, visit, desk, tint, door: { x: wl + 4, y: top + 5 },

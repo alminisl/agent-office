@@ -61,7 +61,7 @@ export function demoSessions() {
     return {
       ...b, helpers, lastPrompt: a.title, updatedAt: Date.now() - i * 3600e3,
       status, live, waitingFor: a.waitingFor,
-      statusSince: a.status === 'your turn' ? Date.now() - 60e3 : Date.now() - 3600e3,
+      statusSince: a.status === 'your turn' ? Date.now() - 20e3 : Date.now() - 3600e3,
       activity: status === 'busy' ? TOOLS(a.files)[(tick + i) % 7] : null,
       personality: personalities[b.id] || (a.role ? { role: a.role, preset: a.preset } : null),
       background: !!a.run, runState: a.run || null, hasReport: !!a.report,

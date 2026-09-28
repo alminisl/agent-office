@@ -21,7 +21,7 @@ It is a single zero-dependency Node server plus a canvas front end. Every sprite
 Live status comes from `~/.claude/sessions`:
 - **Busy**: typing at their desk; the speech bubble shows the current tool ("Editing Cart.tsx", "$ Run the test suite").
 - **Waiting**: hand raised, needs your permission or input.
-- **Your turn**: just replied (idle for under 10 minutes, configurable) and sitting at their desk waiting for you.
+- **Your turn**: just replied and sitting at their desk waiting for you. If you don't answer within 5 minutes (configurable), they go on a break, and their status line says "… · waiting for you".
 - **Idle**: on a break: coffee in the kitchen, the gym, ping pong or the arcade, the sofa, chatting with each other, or peeking into a busy colleague's cubicle.
 - **Offline**: out of office with an empty chair. Hide them with the *Show offline* toggle.
 - Subagents show up as little helper robots that ride the elevator and stand at the parent's desk until their job is done.

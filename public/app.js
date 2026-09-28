@@ -11,7 +11,7 @@ const STATUS_COLOR = { busy: '#4cd964', waiting: '#f5b83d', 'your turn': '#c792f
 const WORK_STATES = new Set(['busy', 'waiting']);
 // Between turns Claude Code reports "idle" while you read/type. Treat a recently-idle live
 // session as "your turn": the agent stays at their desk instead of wandering off.
-let YOUR_TURN_MS = 10 * 60 * 1000; // adjustable in dashboard settings
+let YOUR_TURN_MS = 5 * 60 * 1000; // adjustable in dashboard settings
 const isYourTurn = s => s.live && s.status === 'idle' && Date.now() - (s.statusSince || 0) < YOUR_TURN_MS;
 const displayStatus = s => (isYourTurn(s) ? 'your turn' : s.status);
 
@@ -31,7 +31,7 @@ const store = {
 };
 let zoom = store.get('zoom', 0); // 0 = auto-fit
 let showOffline = store.get('showOffline', true);
-YOUR_TURN_MS = store.get('yourTurnMin', 10) * 60000;
+YOUR_TURN_MS = store.get('yourTurnMinutes', 5) * 60000;
 let crittersOn = store.get('critters', true);
 let time = 0;
 let firstLoad = true;
@@ -248,7 +248,7 @@ class Agent {
         if (free && this.goTo(free, null, 'chat')) { this.faceTarget = free.d; this.chatWith = buddy; return; }
       }
     }
-    const sp = choice(world.spots.filter(s => s.zone === pick && !s.takenBy));
+    const sp = choice(world.spots.filter(s => s.zone === pick && !s.takenBy && (!s.owner || s.owner === this.id)));
     if (sp) this.goTo(sp, sp, 'spot');
     else { const p = choice(world.wanderPts); if (p) this.goTo(p, null, 'wander'); }
   }
@@ -301,6 +301,13 @@ class Agent {
 
   // Short human-readable "what are they doing" line for nameplates and the panel.
   statusText() {
+    const label = this.baseStatus();
+    const s = this.session;
+    const onBreakWaiting = s.live && s.status === 'idle' && !isYourTurn(s) && !this.away && !this.leaving && !this.thinking;
+    return onBreakWaiting ? `${label} · waiting for you` : label;
+  }
+
+  baseStatus() {
     const s = this.session;
     if (this.away) return '🌴 Out of office';
     if (this.leaving) return '👋 Heading home';
@@ -1202,7 +1209,7 @@ $('#boardBtn').onclick = () => openBoard();
 $('#setOffline').onchange = e => setShowOffline(e.target.checked);
 $('#setMatrix').onchange = e => setMatrix(e.target.checked);
 $('#setCritters').onchange = e => { crittersOn = e.target.checked; store.set('critters', crittersOn); if (!crittersOn) critters = []; };
-$('#setYourTurn').onchange = e => { YOUR_TURN_MS = Number(e.target.value) * 60000; store.set('yourTurnMin', Number(e.target.value)); refresh(); };
+$('#setYourTurn').onchange = e => { YOUR_TURN_MS = Number(e.target.value) * 60000; store.set('yourTurnMinutes', Number(e.target.value)); refresh(); };
 $('#setUnhide').onclick = async () => { await post('/api/hide/', { hide: false }); toast('All hidden cubicles are back.'); refresh(); };
 $('#setFit').onclick = () => setZoom(0);
 $('#setHelp').onclick = () => { $('#board').hidden = true; openHelp(); };
