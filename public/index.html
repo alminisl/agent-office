@@ -11,17 +11,17 @@
 <body>
   <header>
     <h1>Agent Office</h1>
-    <div id="stats"></div>
+    <div id="stats" data-tip="How many agents are busy, waiting for permission, waiting for your reply, idle, or out of office."></div>
     <div class="spacer"></div>
-    <label class="toggle" title="Show out-of-office cubicles (S)"><input type="checkbox" id="showOffline"> Show offline</label>
-    <button id="standupBtn" title="Daily standup (M)">🧍 Standup</button>
-    <button id="replayBtn" title="Replay the last 24 hours (T)">⏱️ Replay</button>
-    <button id="boardBtn" title="Office dashboard (D)">🏢 Dashboard</button>
-    <button id="newBtn" class="primary" title="New session (N)">＋ New session</button>
-    <button id="helpBtn" title="Help (?)">?</button>
+    <label class="toggle" data-tip="Show cubicles of sessions that are not running (out of office). Shortcut: S"><input type="checkbox" id="showOffline"> Show offline</label>
+    <button id="standupBtn" data-tip="Daily standup: everyone walks to the meeting room and you get yesterday, today and blockers for everyone who worked today. Shortcut: M">🧍 Standup</button>
+    <button id="replayBtn" data-tip="Replay the last 24 hours and watch who was working when. Shortcut: T">⏱️ Replay</button>
+    <button id="boardBtn" data-tip="Office dashboard: overview, employees, leaderboard and settings. Shortcut: D">🏢 Dashboard</button>
+    <button id="newBtn" class="primary" data-tip="Hire a new agent: start a Claude Code session in a project, with a role and personality. Shortcut: N">＋ New session</button>
+    <button id="helpBtn" data-tip="How the office works, and all keyboard shortcuts. Shortcut: ?">?</button>
     <div class="zoom">
-      <button id="zoomOut" title="Zoom out">−</button>
-      <button id="zoomIn" title="Zoom in">+</button>
+      <button id="zoomOut" data-tip="Zoom out (−)">−</button>
+      <button id="zoomIn" data-tip="Zoom in (+). Press 0 to fit the office to the window.">+</button>
     </div>
   </header>
 
@@ -156,10 +156,10 @@
       <div class="board-head">
         <h2>🏢 Office dashboard</h2>
         <nav class="tabs" id="boardTabs">
-          <button data-btab="overview" class="active">Overview</button>
-          <button data-btab="employees">Employees</button>
-          <button data-btab="leaderboard">Leaderboard</button>
-          <button data-btab="settings">Settings</button>
+          <button data-btab="overview" class="active" data-tip="Office-wide numbers: people, spend, work time, lines, PRs and mood, plus who is working and who needs you.">Overview</button>
+          <button data-btab="employees" data-tip="Everyone in one sortable table: status, what they are doing, motivation, level, cost and context.">Employees</button>
+          <button data-btab="leaderboard" data-tip="Agents ranked by XP, with levels, work time and achievements.">Leaderboard</button>
+          <button data-btab="settings" data-tip="Show offline, themes, lighting, Matrix mode, critters, personality packs and more.">Settings</button>
         </nav>
         <button class="icon" data-close title="Close (Esc)">✕</button>
       </div>

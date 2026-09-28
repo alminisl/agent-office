@@ -243,3 +243,8 @@ body.replaying #office { filter: sepia(0.25) saturate(0.9); }
 .stat-card .desc code { font-size: 11px; }
 .section-desc { margin: -2px 0 10px; font-size: 12px; color: var(--muted); }
 .board h3 { margin-bottom: 4px; }
+
+#tip { position: fixed; z-index: 50; max-width: 320px; background: #111018; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.4; pointer-events: none; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
+#tip[hidden] { display: none; }
+[data-tip] { cursor: help; }
+button[data-tip], .feed [data-tip], th[data-sort][data-tip], label[data-tip] { cursor: pointer; }

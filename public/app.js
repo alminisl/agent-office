@@ -1364,6 +1364,28 @@ $('#showOffline').checked = showOffline;
 function setShowOffline(v) { showOffline = v; $('#showOffline').checked = v; $('#setOffline').checked = v; store.set('showOffline', v); refresh(); }
 $('#showOffline').onchange = e => setShowOffline(e.target.checked);
 
+// ---------------- tooltips ----------------
+// Anything with data-tip gets an instant hover bubble (faster and nicer than the native title).
+const tip = document.createElement('div');
+tip.id = 'tip'; tip.hidden = true; document.body.appendChild(tip);
+let tipFor = null;
+document.addEventListener('mouseover', e => {
+  const el = e.target.closest?.('[data-tip]');
+  if (el === tipFor) return;
+  tipFor = el;
+  if (!el || !el.dataset.tip) { tip.hidden = true; return; }
+  tip.textContent = el.dataset.tip; tip.hidden = false;
+});
+document.addEventListener('mousemove', e => {
+  if (tip.hidden) return;
+  const pad = 14, r = tip.getBoundingClientRect();
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - pad;
+  tip.style.left = `${Math.max(8, x)}px`; tip.style.top = `${Math.max(8, y)}px`;
+});
+document.addEventListener('mousedown', () => { tip.hidden = true; tipFor = null; });
+
 // ---------------- office dashboard ----------------
 // Motivation is a playful read of the agent's state: busy = in the zone, full context = burned out, etc.
 const EAGER = new Set(['intern', 'coach', 'neo', 'michael', 'dwight']), GRUMPY = new Set(['senior', 'sarcastic', 'smith', 'stanley']);
@@ -1415,7 +1437,8 @@ function renderOverview() {
   const needs = list.filter(s => s.status === 'waiting' || isYourTurn(s));
   const avgMot = live.length ? Math.round(live.reduce((t, s) => t + motivation(s).score, 0) / live.length) : 0;
   const pane = document.querySelector('[data-bpane=overview]');
-  const card = (value, label, desc) => `<div class="stat-card"><b>${value}</b><span>${label}</span><p class="desc">${desc}</p></div>`;
+  const plain = html => html.replace(/<[^>]+>/g, '');
+  const card = (value, label, desc) => `<div class="stat-card" data-tip="${escapeHtml(plain(desc))}"><b>${value}</b><span>${label}</span><p class="desc">${desc}</p></div>`;
   const section = (title, desc) => `<h3>${title}</h3><p class="section-desc">${desc}</p>`;
   pane.innerHTML = `
     <div class="kv overview-cards">
@@ -1431,15 +1454,15 @@ function renderOverview() {
     <div class="two">
       <div>
         ${section('Spend by project', 'Recorded cost per project folder, highest first.')}
-        ${projects.map(p => `<div class="hbar"><span title="${escapeHtml(p.project)}">${escapeHtml(p.project)}</span><div class="bar"><div style="width:${p.cost / maxCost * 100}%;background:${projectColor(p.project)}"></div></div><span>${money(p.cost)}</span></div>`).join('')}
+        ${projects.map(p => `<div class="hbar" data-tip="${escapeHtml(p.project)}: ${money(p.cost)} recorded spend across ${p.agents} agent${p.agents > 1 ? 's' : ''} (${p.live} in the office now)"><span>${escapeHtml(p.project)}</span><div class="bar"><div style="width:${p.cost / maxCost * 100}%;background:${projectColor(p.project)}"></div></div><span>${money(p.cost)}</span></div>`).join('')}
         ${section('Work time by project', 'Hands-on work time per project folder.')}
-        ${projects.map(p => `<div class="hbar"><span>${escapeHtml(p.project)}</span><div class="bar"><div style="width:${p.workMs / maxWork * 100}%;background:${projectColor(p.project)}"></div></div><span>${fmtDuration(p.workMs)}</span></div>`).join('')}
+        ${projects.map(p => `<div class="hbar" data-tip="${escapeHtml(p.project)}: ${fmtDuration(p.workMs)} of hands-on work by ${p.agents} agent${p.agents > 1 ? 's' : ''}"><span>${escapeHtml(p.project)}</span><div class="bar"><div style="width:${p.workMs / maxWork * 100}%;background:${projectColor(p.project)}"></div></div><span>${fmtDuration(p.workMs)}</span></div>`).join('')}
       </div>
       <div>
         ${section('Working right now', 'Agents that are busy at this moment and what they are doing. Click one to open their panel.')}
-        <div class="feed">${busy.map(s => `<div data-id="${s.id}">${avatarCell(s)}<b>${escapeHtml(personaFor(s).name)}</b><span class="what">${escapeHtml(s.activity || s.title)}</span></div>`).join('') || '<p class="muted small">Nobody is working. Time to hand out tasks?</p>'}</div>
+        <div class="feed">${busy.map(s => `<div data-id="${s.id}" data-tip="Click to open ${escapeHtml(personaFor(s).name)}'s panel (${escapeHtml(s.project)}: ${escapeHtml(s.title)})">${avatarCell(s)}<b>${escapeHtml(personaFor(s).name)}</b><span class="what">${escapeHtml(s.activity || s.title)}</span></div>`).join('') || '<p class="muted small">Nobody is working. Time to hand out tasks?</p>'}</div>
         ${section('Needs you', 'Agents blocked on a permission ❗ or waiting for your reply 💬. Click one to jump to them.')}
-        <div class="feed">${needs.map(s => `<div data-id="${s.id}">${avatarCell(s)}<b>${escapeHtml(personaFor(s).name)}</b><span class="what">${s.status === 'waiting' ? `❗ ${escapeHtml(s.waitingFor || 'waiting for input')}` : '💬 your turn'} · ${escapeHtml(s.title)}</span></div>`).join('') || '<p class="muted small">Nobody is waiting on you. 🎉</p>'}</div>
+        <div class="feed">${needs.map(s => `<div data-id="${s.id}" data-tip="${s.status === 'waiting' ? 'Blocked until you approve or answer in their terminal' : 'Finished their turn and is waiting for your next message'}. Click to open their panel.">${avatarCell(s)}<b>${escapeHtml(personaFor(s).name)}</b><span class="what">${s.status === 'waiting' ? `❗ ${escapeHtml(s.waitingFor || 'waiting for input')}` : '💬 your turn'} · ${escapeHtml(s.title)}</span></div>`).join('') || '<p class="muted small">Nobody is waiting on you. 🎉</p>'}</div>
         ${section('Helpers on the floor', 'Subagents running for an agent right now, shown as 🤖 robots at their desk.')}
         <p class="muted small">${helpers.size ? `${helpers.size} 🤖 helper${helpers.size > 1 ? 's' : ''} working for ${new Set([...helpers.values()].map(h => h.parent.persona.name)).size} agent(s)` : 'No helpers right now.'}</p>
       </div>
@@ -1453,9 +1476,16 @@ function renderEmployees() {
     cost: r => -(r.s.cost || 0), context: r => -r.pct, motivation: r => -r.m.score, active: r => -(r.s.updatedAt || 0),
   }[empSort.key];
   rows.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * empSort.dir; });
-  const th = (k, label) => `<th data-sort="${k}">${label}${empSort.key === k ? (empSort.dir > 0 ? ' ▾' : ' ▴') : ''}</th>`;
+  const TIPS = {
+    name: 'Agent name and personality preset. Click a row to open their panel.', project: 'The project folder the session runs in.',
+    status: 'busy = working now, waiting = needs your permission, your turn = waiting for your reply, idle = on a break, out of office = not running.',
+    motivation: 'A playful mood score: working is high, waiting on you or bored is lower, a nearly full context is lowest.',
+    level: 'Level from XP: hands-on work time, tool calls, lines changed, prompts, helpers and PRs.', cost: 'Recorded cost of the session, as Claude Code reports it.',
+    context: 'How full the context window is. Near 100% the session gets slow and forgetful; consider /compact.', active: 'When the session last wrote to its transcript.',
+  };
+  const th = (k, label) => `<th data-sort="${k}" data-tip="${escapeHtml(TIPS[k] || '')} Click to sort.">${label}${empSort.key === k ? (empSort.dir > 0 ? ' ▾' : ' ▴') : ''}</th>`;
   const pane = document.querySelector('[data-bpane=employees]');
-  pane.innerHTML = `<table><thead><tr><th></th>${th('name', 'Employee')}${th('project', 'Project')}${th('status', 'Status')}<th>Doing now</th>${th('motivation', 'Motivation')}${th('level', 'Level')}${th('cost', 'Cost')}${th('context', 'Context')}${th('active', 'Last active')}</tr></thead><tbody>
+  pane.innerHTML = `<table><thead><tr><th></th>${th('name', 'Employee')}${th('project', 'Project')}${th('status', 'Status')}<th data-tip="What they are doing right now (the current tool while busy, otherwise the session title).">Doing now</th>${th('motivation', 'Motivation')}${th('level', 'Level')}${th('cost', 'Cost')}${th('context', 'Context')}${th('active', 'Last active')}</tr></thead><tbody>
     ${rows.map(({ s, p, m, ds, pct }) => `<tr data-id="${s.id}">
       <td>${avatarCell(s)}</td>
       <td><b>${escapeHtml(p.name)}</b><div class="muted small">${escapeHtml(PRESETS.find(x => x.key === p.preset)?.label || 'Custom')}</div></td>
@@ -1477,7 +1507,7 @@ function renderEmployees() {
 function renderLeaderboard() {
   const list = [...allSessions].sort((a, b) => (b.xp || 0) - (a.xp || 0));
   const pane = document.querySelector('[data-bpane=leaderboard]');
-  pane.innerHTML = `<table><thead><tr><th>#</th><th></th><th>Agent</th><th>Level</th><th>XP</th><th>Work</th><th>Badges</th></tr></thead><tbody>
+  pane.innerHTML = `<table><thead><tr><th data-tip="Rank by XP. 👑 is the top agent.">#</th><th></th><th data-tip="Agent name and project.">Agent</th><th data-tip="Level and rank, from Intern to Legend. Level 5 and up get a private office.">Level</th><th data-tip="10 per minute of hands-on work, 2 per tool call, ½ per line changed, 5 per prompt, 30 per helper, 250 per PR.">XP</th><th data-tip="Hands-on work time: from each prompt to Claude's last message in that turn.">Work</th><th data-tip="Achievements earned. Hover an icon for its name.">Badges</th></tr></thead><tbody>
     ${list.map((s, i) => `<tr data-id="${s.id}"><td>${i === 0 ? '👑' : i + 1}</td><td>${avatarCell(s)}</td>
       <td><b>${escapeHtml(personaFor(s).name)}</b> <span class="muted small">${escapeHtml(s.project)}</span></td>
       <td>Lv ${s.level || 1} <span class="muted small">${escapeHtml(s.rank || '')}</span></td>

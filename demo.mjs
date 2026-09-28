@@ -105,7 +105,18 @@ export function demoSavePersonalities(changes) {
   return Object.fromEntries(Object.entries(changes).map(([id, p]) => [id, demoSavePersonality(id, p)]));
 }
 
-export const DEMO_STANDUP = `**Frances** (api-gateway)
+export const DEMO_STANDUP = `## 📅 Today
+**4 agents worked 6h 40m** across 4 projects (api-gateway, docs-site, pixel-shop, ml-pipeline).
+
+## Summary of the day
+Testing was the theme: the QA run in api-gateway surfaced three rate-limiter failures, and the flaky cart tests in pixel-shop were traced to a shared fixture. The docs review is nearly done, and the ml-pipeline backfill got its first two weeks of data in. Two things are waiting on you before the day can wrap up.
+
+## Needs your attention
+- Approve Ada's npm test run (pixel-shop).
+- Reply to Frances' QA report (api-gateway).
+
+## Who did what
+**Frances** (api-gateway)
 Yesterday: ran the full test suite and wrote up 3 failures in the rate limiter.
 Today: waiting for a go-ahead to fix the clock injection.
 Blockers: needs your reply on the report.
@@ -123,11 +134,7 @@ Blockers: waiting for permission to run npm test.
 **Dennis** (ml-pipeline)
 Yesterday: designed the feature store backfill.
 Today: backfilling the first two weeks of data.
-Blockers: none.
-
-## Needs your attention
-- Approve Ada's npm test run (pixel-shop).
-- Reply to Frances' QA report (api-gateway).`;
+Blockers: none.`;
 
 // A made-up day of work for the timeline replay: a few work sessions per agent over the last 12h.
 export function demoTimeline(hours = 24) {

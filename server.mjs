@@ -523,19 +523,25 @@ function askAgent(detail, question, mode, persona, res) {
   const stream = ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
   const args = deep
     ? ['-p', prompt, '--resume', detail.id, '--fork-session', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream]
-    : ['-p', prompt, '--model', process.env.ASK_MODEL || 'haiku', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream];
+    : ['-p', prompt, '--model', process.env.ASK_MODEL || 'haiku', '--effort', 'low', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream];
   streamClaude(args, res, {
     cwd: deep ? detail.cwd || os.homedir() : os.tmpdir(),
     timeoutMs: (deep ? 5 : 2) * 60e3,
     timeoutNote: deep ? 'This session is large, so try Quick mode.' : '',
+    fast: !deep,
   });
 }
 
 // Runs `claude -p ... --output-format stream-json --include-partial-messages` and streams the
 // answer's text to an HTTP response as plain text. stdin must be closed or claude waits on it.
-function streamClaude(args, res, { cwd, timeoutMs, timeoutNote = '' }) {
-  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+// Quick jobs (summaries, briefings) skip extended thinking: it only adds latency here
+// (first words in ~1s instead of 20-45s).
+const FAST_ENV = { ...process.env, MAX_THINKING_TOKENS: '0' };
+
+function streamClaude(args, res, { cwd, timeoutMs, timeoutNote = '', prefix = '', fast = false }) {
+  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd, env: fast ? FAST_ENV : process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' });
+  if (prefix) res.write(prefix);
   let wrote = false, buf = '', err = '';
   const timer = setTimeout(() => { child.kill(); res.end(`${wrote ? '\n\n' : ''}⏱️ No answer after ${Math.round(timeoutMs / 60e3)} minutes, so I gave up. ${timeoutNote}`); }, timeoutMs);
   child.stdout.on('data', chunk => {
@@ -560,27 +566,49 @@ function streamClaude(args, res, { cwd, timeoutMs, timeoutNote = '' }) {
 // ---------- standup: yesterday / today / blockers across recent sessions ----------
 const STREAM_ARGS = ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
 async function standup(names, res) {
-  const since = Date.now() - 36 * 3600e3;
-  const list = (await listSessions()).filter(s => s.live || s.updatedAt >= since).slice(0, 16);
+  // "That day" = since local midnight. If nobody has worked yet today (an early standup),
+  // fall back to the last 24 hours.
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  const workedSince = (d, from) => d.turns.reduce((ms, [a, b]) => (b > from ? ms + (b - Math.max(a, from)) : ms), 0);
   const clip = (t, n) => { t = String(t || '').replace(/\s+/g, ' '); return t.length > n ? `${t.slice(0, n)}…` : t; };
-  const briefs = [];
-  for (const s of list) {
+  const fmt = ms => { const m = Math.round(ms / 60000); return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`; };
+
+  const all = [];
+  for (const s of await listSessions()) {
     const d = await sessionDetail(s.id);
-    if (!d) continue;
-    const recentPrompts = d.prompts.filter(p => Date.parse(p.at) >= since).slice(-4);
-    briefs.push([
+    if (d) all.push({ s, d });
+  }
+  let from = midnight.getTime(), window = 'today';
+  let worked = all.filter(({ d }) => workedSince(d, from) > 0);
+  if (!worked.length) { from = Date.now() - 24 * 3600e3; window = 'in the last 24 hours'; worked = all.filter(({ d }) => workedSince(d, from) > 0); }
+  if (!worked.length) {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Nobody worked today or in the last 24 hours, so there is nothing to report. ☕');
+  }
+  worked.sort((a, b) => workedSince(b.d, from) - workedSince(a.d, from));
+  const totalMs = worked.reduce((t, { d }) => t + workedSince(d, from), 0);
+  const projects = [...new Set(worked.map(({ s }) => s.project))];
+
+  const briefs = worked.slice(0, 16).map(({ s, d }) => {
+    const recentPrompts = d.prompts.filter(p => Date.parse(p.at) >= from - 12 * 3600e3).slice(-4);
+    return [
       `### ${names?.[s.id] || s.id.slice(0, 8)} (project: ${s.project})`,
-      `Session: ${s.title}. Status now: ${s.status}${s.activity ? ` (${s.activity})` : ''}${s.waitingFor ? `, waiting for: ${s.waitingFor}` : ''}. Last active: ${new Date(s.updatedAt).toLocaleString()}.`,
+      `Session: ${s.title}. Worked ${fmt(workedSince(d, from))} ${window}. Status now: ${s.status}${s.activity ? ` (${s.activity})` : ''}${s.waitingFor ? `, waiting for: ${s.waitingFor}` : ''}.`,
       recentPrompts.length ? `Asked recently: ${recentPrompts.map(p => clip(p.text, 220)).join(' | ')}` : '',
       d.replies.length ? `Latest replies: ${d.replies.slice(-2).map(r => clip(r.text, 500)).join(' | ')}` : '',
       d.report ? `Report handed in: ${clip(d.report.result, 600)}` : '',
-    ].filter(Boolean).join('\n'));
-  }
-  if (!briefs.length) { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Nobody worked in the last day and a half, so there is nothing to report. ☕'); }
-  const prompt = `You are running the daily standup of an office where every coworker is an AI coding session. Here is what each of them did recently:\n\n${briefs.join('\n\n')}\n\n` +
-    'Write the standup in markdown. For each coworker, one short block: **Name** (project), then "Yesterday:", "Today:" and "Blockers:" lines (write "none" if there are none; things waiting for the user, failing tests or open questions count as blockers). ' +
-    'Be concrete, one line each, no filler. End with a "## Needs your attention" list of the most important blockers across the office (at most 5), or "Nothing, great work." Do not invent work that is not in the notes.';
-  streamClaude(['-p', prompt, '--model', process.env.STANDUP_MODEL || process.env.ASK_MODEL || 'haiku', '--no-session-persistence', '--tools', '', ...STREAM_ARGS], res, { cwd: os.tmpdir(), timeoutMs: 3 * 60e3 });
+    ].filter(Boolean).join('\n');
+  });
+  // exact numbers come from us, not the model
+  const header = `## 📅 ${window === 'today' ? `Today, ${new Date().toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}` : 'Last 24 hours'}\n` +
+    `**${worked.length} agent${worked.length > 1 ? 's' : ''} worked ${fmt(totalMs)}** across ${projects.length} project${projects.length > 1 ? 's' : ''} (${projects.join(', ')}).\n\n`;
+  const prompt = `You are running the daily standup of an office where every coworker is an AI coding session. These coworkers worked ${window}:\n\n${briefs.join('\n\n')}\n\n` +
+    'Write the rest of the standup in markdown, in exactly this order:\n' +
+    '1. "## Summary of the day": 2 to 4 sentences on what happened overall: the main things that got done or moved forward, recurring themes across projects, and the overall state. No per-agent lists here.\n' +
+    '2. "## Needs your attention": the most important blockers across the office (at most 5 bullets), or "Nothing, great work."\n' +
+    '3. "## Who did what": for each coworker, one short block: **Name** (project), then "Yesterday:", "Today:" and "Blockers:" lines (write "none" if there are none; things waiting for the user, failing tests or open questions count as blockers).\n' +
+    'Be concrete, one line each, no filler. Do not repeat the date or totals heading. Do not invent work that is not in the notes.';
+  streamClaude(['-p', prompt, '--model', process.env.STANDUP_MODEL || process.env.ASK_MODEL || 'haiku', '--effort', 'low', '--no-session-persistence', '--tools', '', ...STREAM_ARGS], res, { cwd: os.tmpdir(), timeoutMs: 3 * 60e3, prefix: header, fast: true });
 }
 
 // ---------- personality quirks (generated by Claude from the traits) ----------
@@ -593,7 +621,7 @@ Reply with ONLY a JSON object, no prose, no code fences:
  "verbs": {"Editing": "...", "Reading": "...", "Searching": "...", "Running": "..."} (in-character replacements for these activity verbs, one or two words each),
  "emoji": "one emoji that represents them"}`;
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, '--model', 'haiku', '--no-session-persistence', '--tools', '', '--output-format', 'text'], { cwd: os.tmpdir(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, '--model', 'haiku', '--no-session-persistence', '--tools', '', '--output-format', 'text'], { cwd: os.tmpdir(), env: FAST_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { err += d; });

@@ -46,12 +46,12 @@ Live status comes from `~/.claude/sessions`:
 - Run them interactively in a terminal, or **inside the office**: a background `claude -p` run with read-only tools that hands in a 📋 report, shown in the agent's panel.
 
 ### Standups, handoffs and replay
-- **Daily standup** (<kbd>M</kbd>): everyone in the office walks to the meeting room, and a summary streams in with *Yesterday / Today / Blockers* for every agent active in the last 36 hours, ending with the things that need your attention.
+- **Daily standup** (<kbd>M</kbd>): everyone in the office walks to the meeting room, and a summary streams in (in about 15 seconds). It opens with the day's exact totals and a short **summary of the day**, then what **needs your attention**, then *Yesterday / Today / Blockers* for each agent who actually worked that day (or in the last 24 hours before anyone has started).
 - **Handoffs**: drag a report (or a latest reply) from the panel onto another agent, or use 🤝 *Hand off*. You get an editable first task ("Bug Hunter found this, Dwight fix it"), and it opens in a terminal, either continuing the target's session (they keep their memory) or as a new session in their project with their personality.
 - **Timeline & replay** (<kbd>T</kbd>): replay the last 24 hours at 1 minute to 1 hour per second. Scrub along an activity graph and watch agents arrive, work, take breaks and leave, just as they did.
 
 ### Dashboard
-Press <kbd>D</kbd> for the office dashboard:
+Press <kbd>D</kbd> for the office dashboard. Every card and section explains what it measures, and everything has a hover tooltip:
 - **Overview**: total spend, spend per hour of work, hands-on work time, lines changed, PRs, office motivation, spend and work time by project, who's working right now and who needs you.
 - **Employees**: a sortable table with status, what they're doing now, motivation, level, cost, context usage and last activity.
 - **Leaderboard** and **Settings**.
