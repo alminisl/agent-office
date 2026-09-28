@@ -42,8 +42,9 @@ Live status comes from `~/.claude/sessions`:
 - **Bring this personality to work**: when you start or resume a session from the office, the personality's work style is passed to Claude via `--append-system-prompt` (a Perfectionist tests everything, a Detective finds the root cause first, a Senior keeps diffs minimal).
 
 ### Roles & background agents
-- Hire a **PR Reviewer**, **QA Tester**, **Bug Hunter**, **Security Auditor** or **Docs Reviewer** from *New session*.
-- Run them interactively in a terminal, or **inside the office**: a background `claude -p` run with read-only tools that hands in a 📋 report, shown in the agent's panel.
+- Hire a **🔧 Fixer**, **PR Reviewer**, **QA Tester**, **Bug Hunter**, **Security Auditor** or **Docs Reviewer** from *New session*.
+- Run them interactively in a terminal, or **inside the office**: a background `claude -p` run that hands in a 📋 report, shown in the agent's panel. Reviewers and auditors are read-only. A Fixer edits and commits on its own branch in a separate git worktree, and never pushes.
+- Background agents can read the office TODO board, add follow-ups, and mark their own card done.
 
 ### The Product Manager and the TODO board
 - **You're the boss, and 👔 Morgan the Product Manager works for you.** Morgan is a permanent resident with a desk in the meeting room, and hosts the standups. Each time you ask something, the office sends a fresh briefing of every agent (status, what they're doing, recent messages, reports) and the board, so the PM always knows what everyone is working on.
@@ -63,7 +64,7 @@ Senior agents (level 5+ by default) can hire coworkers themselves, mid-task, to 
 - A **🔧 Fixer** gets its own git branch (`office/<name>-<id>`) in a separate worktree under `~/.agent-office/worktrees`. It may edit, run tests and checks, and commit there, but never push. Your working copy and the senior agent's are never touched. Its report names the branch to review (`git diff HEAD...office/…`).
 - **PR Reviewer, QA Tester, Bug Hunter, Security Auditor** and **Docs Reviewer** hires are read-only, as in the office roles.
 - The office decides who may hire: it identifies the calling session from the MCP server's parent process, checks its level, and enforces a limit of active hires per agent (3 by default). You can change all of this, or switch hiring off, in Settings.
-- Hires walk into the office with a **👥 hired by …** badge, and you get a toast. Hires can't hire others: background agents start without MCP servers.
+- Hires walk into the office with a **👥 hired by …** badge, and you get a toast. Hires can't hire others: background agents only get the board and overview tools, not the hiring ones, and none of your other MCP servers.
 
 ### Dashboard
 Press <kbd>D</kbd> for the office dashboard. Every card and section explains what it measures, and everything has a hover tooltip:
@@ -132,6 +133,8 @@ Demo mode serves a completely made-up office. Nothing is read from `~/.claude`.
 
 There is nothing to install: no dependencies, no build step.
 
+**Optional:** to let your Claude sessions use the office themselves (read and add to the TODO board, see what everyone is doing, and hire coworkers at level 5+), open **Dashboard → Settings** and click **🔌 Connect to Claude Code**. It runs `claude mcp add --scope user agent-office …` for you; *Disconnect* removes it again.
+
 ## How it works
 
 - **Sessions** come from the transcripts in `~/.claude/projects/**.jsonl` (the last 14 days, up to 20 cubicles; running sessions are always shown). Transcripts are parsed for titles, prompts, replies, tool calls, files, lines changed, PRs, cost and context usage, and cached by modification time.
@@ -146,8 +149,14 @@ There is nothing to install: no dependencies, no build step.
   - PR Reviewer: also `gh pr list / view / diff / checks` and `glab mr list / view / diff`.
   - QA Tester and Bug Hunter: also common test runners (`npm test`, `vitest`, `jest`, `pytest`, `go test`, `cargo test`, `make test`, `rspec`, Django tests, ...).
 
+  - Fixer: `Read`, `Grep`, `Glob`, `Edit`, `Write`, `git status / diff / log / show / add / commit`, test runners and checks (`node --check`, lint, typecheck), in its own worktree under `~/.agent-office/worktrees`. It has no push.
+  - Every background agent also gets the office board and overview tools (`todo_list`, `todo_add`, `todo_update`, `office_overview`) through `--strict-mcp-config`, so none of your other MCP servers are loaded.
+
   The final report is saved to `data/reports/` and shown in the agent's panel.
-- **Personalities** and hidden cubicles are stored locally in `data/` (ignored by git).
+- **The Product Manager, the standup and Plan my day** build a fresh briefing of every agent (status, recent prompts and replies, reports) and the board, and ask a model (`PM_MODEL` / `STANDUP_MODEL`) with extended thinking off so answers start within a second or two. The standup's date and totals are computed by the server, not the model.
+- **Replay** rebuilds the day from the turn and tool-call timestamps in the transcripts.
+- **The office tools** (`mcp.mjs`) are a dependency-free MCP server. It identifies the calling session from its parent processes, and the office checks levels and limits before hiring.
+- **Personalities, hidden cubicles, the TODO board, settings and reports** are stored locally in `data/` (ignored by git). Writes are queued per file and atomic, with a `.bak` of the last good version.
 
 ## Configuration
 
@@ -192,7 +201,8 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 ## Privacy & safety
 
 - The server listens on `127.0.0.1` only and reads your Claude Code data locally. Your transcripts are never uploaded anywhere by Agent Office.
-- The only things that leave your machine are what Claude Code itself sends when you use **Ask**, **Generate quirks** or a **background role**, all of which run the regular `claude` CLI with your account. The page also loads its fonts from Google Fonts.
+- The only things that leave your machine are what Claude Code itself sends when you use **Ask**, **the PM**, **the standup**, **Generate quirks** or a **background role**, all of which run the regular `claude` CLI with your account. The PM and the standup include a short briefing of your sessions in their prompt. The page also loads its fonts from Google Fonts.
+- **Connect to Claude Code** adds one MCP server entry (`agent-office`) to your Claude Code user settings (`~/.claude.json`); *Disconnect* removes it.
 - **Ask** never writes to your session: Quick mode uses a separate, non-persistent prompt, and Deep mode uses a forked, non-persistent copy. Both run with all tools disabled.
 - **Background roles** get a fixed tool allowlist chosen on the server: read-only for reviewers and auditors, plus test runners for QA. **Fixers** can also edit and commit, but only inside their own git worktree and branch, and they can never push.
 - **Hiring** only works for sessions on this machine at the required level, is rate-limited per agent, and can be switched off. The MCP server only talks to `127.0.0.1`.
