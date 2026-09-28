@@ -514,6 +514,23 @@ async function agentApi(route, body) {
   return { id, name, role, branch: run.branch, worktree: run.worktree };
 }
 
+// ---------- first-run setup check (for the onboarding checklist) ----------
+async function setupStatus() {
+  const [transcripts, live, cli, board] = await Promise.all([
+    allTranscripts(), liveSessions(),
+    claudeCli(['--version']).then(r => (r.ok ? r.out.trim().split('\n')[0] : null)),
+    loadBoard(), mcpStatus(), // refreshes mcpConnected
+  ]);
+  const personalities = await loadPersonalities();
+  return {
+    claudeDir: CLAUDE_DIR, claudeDirFound: fs.existsSync(PROJECTS_DIR),
+    transcripts: transcripts.length, live: live.size, claudeCli: cli,
+    terminal: TERMINAL, platform: process.platform, mcpConnected,
+    customPersonalities: Object.values(personalities).filter(p => !p.auto).length,
+    boardCards: (board.items || []).length, maxDays: MAX_DAYS,
+  };
+}
+
 // ---------- registering the MCP server with Claude Code ----------
 function claudeCli(args) {
   return new Promise(resolve => execFile(process.env.CLAUDE_BIN || 'claude', args, { timeout: 30e3 }, (err, stdout, stderr) => resolve({ ok: !err, out: `${stdout}${stderr}` })));
@@ -966,6 +983,7 @@ async function demoRoute(url, req, res) {
   }
   if (url.pathname === '/api/projects') return json(res, 200, ['/home/dev/code/pixel-shop', '/home/dev/code/api-gateway', '/home/dev/code/docs-site']);
   if (url.pathname === '/api/hidden') return json(res, 200, []);
+  if (url.pathname === '/api/setup') return json(res, 200, { demo: true, claudeDirFound: true, transcripts: 14, live: 10, claudeCli: 'demo', terminal: 'iTerm', mcpConnected: false, customPersonalities: 0, boardCards: 7, maxDays: 14 });
   return json(res, 200, { ok: true, demo: true }); // new/open/end/hide are no-ops in the demo
 }
 
@@ -1087,6 +1105,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { from, to: Date.now(), sessions: out });
     }
     if (url.pathname === '/api/hidden') return json(res, 200, await loadHidden());
+    if (url.pathname === '/api/setup') return json(res, 200, await setupStatus());
     if (url.pathname === '/api/projects') return json(res, 200, await knownProjects());
     if (url.pathname === '/api/config') return json(res, 200, { terminal: TERMINAL, maxDays: MAX_DAYS, maxRooms: MAX_ROOMS, achievements: ACHIEVEMENTS.map(({ test, ...a }) => a), ranks: RANKS });
     if (req.method === 'POST' && url.pathname === '/api/new') {

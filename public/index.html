@@ -27,7 +27,14 @@
   </header>
 
   <main>
-    <div id="viewport"><canvas id="office"></canvas></div>
+    <div id="viewport"><canvas id="office"></canvas>
+      <div id="emptyState" class="empty-state" hidden>
+        <div class="empty-emoji">🏢</div>
+        <h2 id="emptyTitle"></h2>
+        <p id="emptyText"></p>
+        <div id="emptyActions" class="row"></div>
+      </div>
+    </div>
 
     <aside id="panel" hidden>
       <div class="panel-head">
@@ -274,7 +281,7 @@
           <p class="muted small" id="hiddenInfo"></p>
         </section>
       </div>
-      <div class="row"><button class="primary" data-close>Got it</button></div>
+      <div class="row"><button class="primary" data-close>Got it</button><button id="helpTour">▶ Take the tour</button><button id="helpChecklist">✅ Setup checklist</button></div>
     </div>
   </div>
 
@@ -336,6 +343,22 @@
     <div class="fc-head"><b>🧍 Daily standup</b><span id="standupTime" class="muted small"></span><button class="icon" id="standupClose" title="End standup">✕</button></div>
     <div id="standupText" class="md"></div>
     <div class="row"><button id="standupCopy">Copy</button><button id="standupAgain">↻ Run again</button><button id="standupEnd" class="primary">End standup</button></div>
+  </div>
+
+  <div id="tour" hidden>
+    <div id="tourSpot"></div>
+    <div id="tourCard">
+      <div class="tour-head"><span id="tourStep" class="muted small"></span><button id="tourSkip" class="icon" title="Skip the tour (Esc)">Skip ✕</button></div>
+      <h3 id="tourTitle"></h3>
+      <p id="tourText"></p>
+      <div class="row"><button id="tourBack">← Back</button><button id="tourNext" class="primary">Next →</button></div>
+    </div>
+  </div>
+
+  <div id="setupCard" class="floating-card setup-card" hidden>
+    <div class="fc-head"><b>✅ Get set up</b><span id="setupProgress" class="muted small"></span><button class="icon" id="setupClose" title="Hide the checklist">✕</button></div>
+    <ul id="setupList"></ul>
+    <p id="setupDone" class="muted small" hidden>All set. Enjoy the office! 🎉</p>
   </div>
 
   <div id="toast" hidden></div>

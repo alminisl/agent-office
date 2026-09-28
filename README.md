@@ -130,7 +130,7 @@ All screenshots use demo mode: the agents, projects and numbers are made up.
 git clone https://github.com/alminisl/agent-office && cd agent-office && npm start
 ```
 
-Then open <http://localhost:4747>. Press <kbd>?</kbd> in the app for the legend and shortcuts.
+Then open <http://localhost:4747>. The first time, a **one-minute guided tour** shows you around (the office, statuses, the agent panel, the board, the standup, the PM and Settings), followed by a **setup checklist**: sessions found, Claude Code CLI found, office tools connected, personalities and your first board card. If no sessions are found, the office tells you where it looked and how to start one. Press <kbd>?</kbd> any time for help and shortcuts, or to replay the tour.
 
 Want to try it without touching your own sessions, or show it in a talk?
 

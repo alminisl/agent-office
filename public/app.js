@@ -92,6 +92,7 @@ async function refresh() {
   const top = [...allSessions].sort((a, b) => (b.xp || 0) - (a.xp || 0))[0];
   employeeOfMonth = top?.xp ? top.id : null;
   renderStats();
+  renderEmptyState();
   if (selectedId) updatePanelHeader();
   loadBoard();
   firstLoad = false;
@@ -1117,6 +1118,134 @@ function seedNews() {
     if (s.status === 'waiting') officeNews('waiting', a);
   }
   news.forEach(x => { x.t -= Math.random() * 3600e3; });
+}
+
+// ---------------- onboarding: guided tour, setup checklist, empty state ----------------
+let setup = null;
+const loadSetup = async () => { try { setup = await (await fetch('/api/setup')).json(); } catch { setup = null; } return setup; };
+
+// where something is on screen: a DOM element, or a spot on the office canvas
+function plaqueRect(room) {
+  const r = canvas.getBoundingClientRect(), s = scale();
+  return new DOMRect(r.left + room.plaque.x * T * s - 6, r.top + (room.plaque.y - 1.6) * T * s - 6, room.plaque.w * T * s + 12, 2.9 * T * s + 12);
+}
+function scrollToRoom(room) {
+  const s = scale();
+  viewport.scrollTo({ top: Math.max(0, (room.plaque.y - 4) * T * s), left: Math.max(0, (room.plaque.x - 6) * T * s) });
+}
+const tourAgent = () => [...agents.values()].filter(a => a.id !== 'pm' && !a.away).sort((a, b) => (b.session.live - a.session.live))[0] || [...agents.values()].find(a => a.id !== 'pm');
+const el = sel => () => document.querySelector(sel)?.getBoundingClientRect();
+
+const TOUR = [
+  { title: '👋 Welcome to Agent Office', text: 'Every Claude Code session on this machine is a coworker here. This one-minute tour shows you around. You can replay it any time from the help screen (<kbd>?</kbd>).' },
+  { title: '🏢 Your office', text: 'Each cubicle is a session, grouped by project (the coloured stripe on the nameplate). Agents at level 5+ move into a private office up top. The kitchen, gym, game room and lounge are where they take their breaks.', target: el('#viewport'), before: () => viewport.scrollTo({ top: 0 }) },
+  { title: '🚦 Status at a glance', text: '<b style="color:#4cd964">busy</b> = working, the bubble shows the tool · <b style="color:#f5b83d">waiting</b> = needs your permission · <b style="color:#c792ff">your turn</b> = waiting for your reply · <b style="color:#6fb7ff">idle</b> = on a break · <b style="color:#a39db8">offline</b> = out of office.', target: el('#stats') },
+  { title: '👆 Click an agent', text: 'Click an agent or their nameplate. That copies <code>claude --resume</code> for their session and opens their panel. The nameplate also shows their level, what they are doing, and how full their context is.', target: () => { const a = tourAgent(); return a && plaqueRect(a.room); }, before: () => { closePanel(); const a = tourAgent(); if (a) scrollToRoom(a.room); } },
+  { title: '🗂️ The agent panel', text: '<b>Work</b>: what they did, reports, level and context. <b>Ask</b>: ask them anything (their real conversation is never touched). <b>Personality</b>: their name, look and character. Plus buttons to resume, hand off or delete.', target: el('#panel'), before: () => { const a = tourAgent(); if (a) select(a.id, false); } },
+  { title: '📋 The office board', text: 'A shared TODO board: To do, In progress, Done. Give cards to agents or hire someone for them. Cards move along on their own as agents work.', target: el('#todoBtn'), before: () => closePanel() },
+  { title: '🧍 Daily standup', text: 'Sends everyone to the meeting room and writes a summary of the day: what happened, what needs your attention, and each agent\'s update.', target: el('#standupBtn') },
+  { title: '👔 Meet your Product Manager', text: 'You\'re the boss. Morgan knows what every agent is doing: ask them "what\'s blocked?" or let them plan your day.', target: () => { const pm = agents.get('pm'); return pm && plaqueRect(pm.room); }, before: () => { const pm = agents.get('pm'); if (pm) scrollToRoom(pm.room); } },
+  { title: '🏢 Dashboard & Settings', text: 'Costs, everyone in one table, and the leaderboard. In <b>Settings</b>: themes, personality packs, and <b>🔌 Connect to Claude Code</b>, which lets your agents use the board and hire helpers.', target: el('#boardBtn'), before: () => viewport.scrollTo({ top: 0 }) },
+  { title: '🎉 That\'s it!', text: 'Press <kbd>?</kbd> any time for help and all the shortcuts. Next, a short checklist to finish setting up.', target: el('#helpBtn') },
+];
+const tour = { i: 0, on: false, raf: 0 };
+function startTour() {
+  closeAllModals();
+  tour.on = true; tour.i = 0;
+  $('#tour').hidden = false;
+  showTourStep();
+  const follow = () => { if (!tour.on) return; positionTour(); tour.raf = requestAnimationFrame(follow); };
+  follow();
+}
+function endTour(done = true) {
+  tour.on = false; cancelAnimationFrame(tour.raf);
+  $('#tour').hidden = true;
+  store.set('tourDone', true);
+  if (done) openChecklist(true);
+}
+function showTourStep() {
+  const step = TOUR[tour.i];
+  step.before?.();
+  $('#tourTitle').innerHTML = step.title;
+  $('#tourText').innerHTML = step.text;
+  $('#tourStep').textContent = `${tour.i + 1} / ${TOUR.length}`;
+  $('#tourBack').disabled = tour.i === 0;
+  $('#tourNext').textContent = tour.i === TOUR.length - 1 ? 'Finish' : 'Next →';
+  setTimeout(positionTour, 60);
+}
+function positionTour() {
+  const step = TOUR[tour.i], spot = $('#tourSpot'), card = $('#tourCard');
+  const r = step.target?.();
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  if (!r || !r.width) {
+    spot.style.cssText = 'left:50%;top:50%;width:0;height:0';
+    card.style.left = `${(innerWidth - cw) / 2}px`; card.style.top = `${(innerHeight - ch) / 2}px`;
+    return;
+  }
+  const pad = 6, x = Math.max(4, r.left - pad), y = Math.max(4, r.top - pad);
+  const w = Math.min(innerWidth - x - 4, r.width + pad * 2), h = Math.min(innerHeight - y - 4, r.height + pad * 2);
+  spot.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+  // card below the target if it fits, else above, else beside
+  let cx = Math.min(Math.max(12, x + w / 2 - cw / 2), innerWidth - cw - 12);
+  let cy = y + h + 14;
+  if (cy + ch > innerHeight - 12) cy = y - ch - 14;
+  if (cy < 12) { cy = Math.min(Math.max(12, y + h / 2 - ch / 2), innerHeight - ch - 12); cx = x + w + 14 + cw < innerWidth ? x + w + 14 : Math.max(12, x - cw - 14); }
+  card.style.left = `${cx}px`; card.style.top = `${cy}px`;
+}
+$('#tourNext').onclick = () => { if (tour.i >= TOUR.length - 1) return endTour(true); tour.i++; showTourStep(); };
+$('#tourBack').onclick = () => { if (tour.i > 0) { tour.i--; showTourStep(); } };
+$('#tourSkip').onclick = () => endTour(false);
+document.addEventListener('keydown', e => {
+  if (!tour.on) return;
+  if (e.key === 'Escape') { e.stopImmediatePropagation(); endTour(false); }
+  if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); $('#tourNext').click(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopImmediatePropagation(); $('#tourBack').click(); }
+}, true);
+function closeAllModals() { document.querySelectorAll('.modal').forEach(m => { m.hidden = true; }); }
+
+// setup checklist
+async function openChecklist(force = false) {
+  if (!force && store.get('checklistDismissed', false)) return;
+  const st = await loadSetup();
+  if (!st) return;
+  const items = [
+    { ok: st.transcripts > 0, text: st.transcripts > 0 ? `Found ${st.transcripts} Claude Code session${st.transcripts > 1 ? 's' : ''} (${st.live} running)` : `No sessions yet in <code>${escapeHtml(st.claudeDir || '~/.claude')}</code>`, act: st.transcripts > 0 ? null : ['Start one', () => openNew()] },
+    { ok: !!st.claudeCli, text: st.claudeCli ? `Claude Code CLI found (${escapeHtml(st.claudeCli)})` : '<code>claude</code> not found on your PATH. Ask, roles and the PM need it.', act: null },
+    { ok: store.get('tourDone', false), text: 'Take the one-minute tour', act: ['Start tour', startTour] },
+    { ok: st.mcpConnected, text: 'Connect the office tools, so agents can use the board and hire helpers', act: st.demo ? null : ['Connect', async () => { await post('/api/mcp', { install: true }).catch(e => toast(escapeHtml(e.message))); toast('🔌 Connected. New sessions get the office tools.'); openChecklist(true); }] },
+    { ok: st.customPersonalities > 0, text: 'Give your agents personalities (try the Dunder Mifflin pack)', act: ['Settings', () => { openBoard('settings'); }] },
+    { ok: st.boardCards > 0 || boardItems.length > 0, text: 'Add your first card to the board', act: ['Open board', () => openTodo()] },
+  ];
+  const done = items.filter(i => i.ok).length;
+  $('#setupProgress').textContent = `${done} / ${items.length}`;
+  $('#setupList').innerHTML = items.map((it, i) => `<li class="${it.ok ? 'ok' : ''}"><span class="chk">${it.ok ? '✅' : '⬜'}</span><span class="txt">${it.text}</span>${!it.ok && it.act ? `<button class="small" data-i="${i}">${it.act[0]}</button>` : ''}</li>`).join('');
+  $('#setupList').querySelectorAll('[data-i]').forEach(b => b.onclick = () => items[Number(b.dataset.i)].act[1]());
+  $('#setupCard').hidden = done === items.length && !force;
+  if (done === items.length) $('#setupDone').hidden = false; else $('#setupDone').hidden = true;
+}
+$('#setupClose').onclick = () => { $('#setupCard').hidden = true; store.set('checklistDismissed', true); };
+
+// empty office
+function renderEmptyState() {
+  const box = $('#emptyState');
+  if (!box) return;
+  const none = allSessions.length === 0 && !replay.on;
+  const allAway = !none && sessions.length === 0;
+  box.hidden = !(none || allAway);
+  if (box.hidden) return;
+  if (allAway) {
+    $('#emptyTitle').textContent = 'Everyone is out of office';
+    $('#emptyText').innerHTML = `You have ${allSessions.length} recent session${allSessions.length > 1 ? 's' : ''}, but none is running and <b>Show offline</b> is off.`;
+    $('#emptyActions').innerHTML = '<button class="primary" id="emptyShow">Show offline agents</button><button id="emptyNew">＋ Start a session</button>';
+    $('#emptyShow').onclick = () => setShowOffline(true);
+  } else {
+    $('#emptyTitle').textContent = 'No coworkers yet';
+    $('#emptyText').innerHTML = setup && !setup.claudeDirFound
+      ? `Agent Office didn't find any Claude Code data in <code>${escapeHtml(setup.claudeDir)}</code>. Use Claude Code once (or set <code>CLAUDE_DIR</code>), and your sessions will show up here.`
+      : `No Claude Code sessions from the last ${setup?.maxDays || 14} days. Start one and they'll walk in through the elevator.`;
+    $('#emptyActions').innerHTML = '<button class="primary" id="emptyNew">＋ Start a session</button><a class="btn-link" href="https://alminisl.github.io/agent-office/demo/" target="_blank" rel="noopener">🎮 See the demo office</a>';
+  }
+  $('#emptyNew').onclick = () => openNew();
 }
 
 // ---------------- rendering ----------------
@@ -2147,6 +2276,8 @@ async function openHelp() {
   if (u) u.onclick = async ev => { ev.preventDefault(); await post('/api/hide/', { hide: false }); $('#hiddenInfo').textContent = 'All cubicles restored.'; refresh(); };
 }
 $('#helpBtn').onclick = openHelp;
+$('#helpTour').onclick = () => { $('#help').hidden = true; startTour(); };
+$('#helpChecklist').onclick = () => { $('#help').hidden = true; openChecklist(true); };
 document.querySelectorAll('.modal').forEach(m => {
   m.addEventListener('click', e => { if (e.target === m || e.target.hasAttribute('data-close')) { m.hidden = true; document.activeElement.blur(); } });
 });
@@ -2213,6 +2344,9 @@ await refresh();
 seedNews();
 // agents stuck waiting become office gossip
 setInterval(() => { for (const a of agents.values()) if (a.session.status === 'waiting' && a.waitingSince && Date.now() - a.waitingSince > 10 * 60e3 && !news.some(n => n.who === a.id && n.type === 'waiting' && Date.now() - n.t < 3600e3)) officeNews('waiting', a); }, 60000);
-if (!store.get('seenHelp', false)) { store.set('seenHelp', true); openHelp(); }
+await loadSetup();
+renderEmptyState();
+if (!store.get('tourDone', false)) setTimeout(startTour, 700);
+else openChecklist();
 setInterval(refresh, 3000);
 requestAnimationFrame(loop);
