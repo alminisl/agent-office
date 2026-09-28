@@ -249,8 +249,12 @@ const ROLE_TOOLS = {
   docs: [...READ_ONLY],
   custom: [...READ_ONLY],
 };
-const BACKGROUND_NOTE = 'You are running unattended inside "Agent Office": nobody can answer questions or approve extra permissions, and you only have read-only tools (plus test runners for QA roles). Do not try to edit files. When you are done, reply with a concise markdown report: a one-line summary, then findings ranked by severity with file:line references, then recommended next steps.';
-const FIXER_NOTE = branch => `You are running unattended inside "Agent Office": nobody can answer questions or approve extra permissions. You work in a separate git worktree on branch "${branch}", so edit freely: nobody else's working copy is affected. Make the change, run the relevant tests, and commit your work on this branch with a clear message. Never push. When you are done, reply with a concise markdown report: what you changed (with file paths), test results, anything left to do, and the branch name.`;
+const BOARD_NOTE = 'The office has a shared TODO board. Check it with the todo_list tool; if you find follow-up work you will not do yourself, add it with todo_add (short title, details in notes, no duplicates). office_overview shows what the other agents are doing.';
+const BACKGROUND_NOTE = `You are running unattended inside "Agent Office": nobody can answer questions or approve extra permissions, and you only have read-only tools (plus test runners for QA roles). Do not try to edit files. ${BOARD_NOTE} When you are done, reply with a concise markdown report: a one-line summary, then findings ranked by severity with file:line references, then recommended next steps.`;
+// Background agents get the office MCP server with only the board and overview tools (no hiring).
+const OFFICE_MCP_CONFIG = () => JSON.stringify({ mcpServers: { 'agent-office': { command: process.execPath, args: [path.join(ROOT, 'mcp.mjs')], env: { OFFICE_URL: `http://127.0.0.1:${PORT}` } } } });
+const BOARD_TOOLS = ['mcp__agent-office__todo_list', 'mcp__agent-office__todo_add', 'mcp__agent-office__todo_update', 'mcp__agent-office__office_overview'];
+const FIXER_NOTE = branch => `You are running unattended inside "Agent Office": nobody can answer questions or approve extra permissions. You work in a separate git worktree on branch "${branch}", so edit freely: nobody else's working copy is affected. Make the change, run the relevant tests, and commit your work on this branch with a clear message. Never push. ${BOARD_NOTE} When you are done, reply with a concise markdown report: what you changed (with file paths), test results, anything left to do, and the branch name.`;
 const runs = new Map(); // session id -> { child, cwd, role, name, startedAt, endedAt, state, hiredBy, task, branch, worktree }
 
 // A fresh worktree + branch for a fixer, so they never touch anyone's working copy.
@@ -272,13 +276,14 @@ async function loadReport(id) {
   try { return JSON.parse(await fsp.readFile(path.join(REPORTS_DIR, `${id}.json`), 'utf8')); } catch { return null; }
 }
 
-function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null }) {
-  const tools = ROLE_TOOLS[role] || ROLE_TOOLS.custom;
+function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null, todoId = null }) {
+  const tools = [...(ROLE_TOOLS[role] || ROLE_TOOLS.custom), ...BOARD_TOOLS];
+  if (todoId) prompt += `\n\n(This task is card [${todoId}] on the office board. When you are done, mark it done with todo_update, adding a one-line note.)`;
   let wt = null;
   if (role === 'fixer') { wt = createWorktree(cwd, persona?.name, id); cwd = wt.cwd; }
   const system = [persona?.workStyle, wt ? FIXER_NOTE(wt.branch) : BACKGROUND_NOTE].filter(Boolean).join('\n\n');
-  // --strict-mcp-config with no config = no MCP servers: faster start, and hires can't hire others
-  const args = ['-p', prompt, '--allowedTools', ...tools, '--output-format', 'json', '--strict-mcp-config', '--session-id', id, '--append-system-prompt', system];
+  // only the office MCP server (not the user's others): faster start. Hiring tools aren't allowed, so hires can't hire.
+  const args = ['-p', prompt, '--allowedTools', ...tools, '--output-format', 'json', '--strict-mcp-config', '--mcp-config', OFFICE_MCP_CONFIG(), '--session-id', id, '--append-system-prompt', system];
   if (persona?.name) args.push('-n', persona.name);
   const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   const run = { child, cwd, role, name: persona?.name, startedAt: Date.now(), state: 'running', hiredBy, task: prompt, branch: wt?.branch, worktree: wt?.worktree };
@@ -414,7 +419,8 @@ async function agentApi(route, body) {
   const caller = await callerSession(body.pids);
   if (!caller) throw Object.assign(new Error('Agent Office could not tell which session you are. Only sessions running on this machine can hire.'), { status: 403 });
   const me = (await listSessions()).find(s => s.id === caller);
-  const myName = (await loadPersonalities())[caller]?.name || 'This agent';
+  const liveMe = (await liveSessions()).get(caller);
+  const myName = (await loadPersonalities())[caller]?.name || me?.title || liveMe?.name || (liveMe?.cwd && path.basename(liveMe.cwd)) || 'An agent';
   if (route === 'overview') return { text: await officeBriefing() };
   if (route === 'todo') {
     const { op = 'list' } = body;
@@ -465,8 +471,12 @@ function claudeCli(args) {
   return new Promise(resolve => execFile(process.env.CLAUDE_BIN || 'claude', args, { timeout: 30e3 }, (err, stdout, stderr) => resolve({ ok: !err, out: `${stdout}${stderr}` })));
 }
 const MCP_NAME = 'agent-office';
+let mcpConnected = false; // cached; refreshed at startup and whenever the status is checked
+// Extra system prompt for sessions started from the office: their work style, plus the board if the tools are connected.
+const officePrompt = ws => { const t = [ws, mcpConnected ? BOARD_NOTE : ''].filter(Boolean).join(' '); return t ? ` --append-system-prompt ${shq(t)}` : ''; };
 async function mcpStatus() {
   const r = await claudeCli(['mcp', 'get', MCP_NAME]);
+  mcpConnected = r.ok;
   return { installed: r.ok, command: `claude mcp add --scope user ${MCP_NAME} -e OFFICE_URL=http://127.0.0.1:${PORT} -- ${process.execPath} ${path.join(ROOT, 'mcp.mjs')}` };
 }
 async function mcpInstall(install) {
@@ -986,7 +996,7 @@ const server = http.createServer(async (req, res) => {
       if (!d) return json(res, 404, { error: 'That agent no longer exists.' });
       if (!prompt) return json(res, 400, { error: 'The handoff needs a task.' });
       const p = d.personality || {};
-      const ws = p.impact !== false && p.workStyle ? ` --append-system-prompt ${shq(p.workStyle)}` : '';
+      const ws = officePrompt(p.impact !== false ? p.workStyle : '');
       if (mode === 'resume') {
         if (d.status !== 'offline') return json(res, 409, { error: `${p.name || 'They'} already have a session open. Choose "new session", or paste the task into their terminal.` });
         await openTerminal(`cd ${shq(d.cwd || os.homedir())} && claude --resume ${d.id}${ws} ${shq(prompt)}`);
@@ -1030,12 +1040,12 @@ const server = http.createServer(async (req, res) => {
       if (persona) await savePersonality(id, { ...persona, role: role || null });
       if (background) {
         if (!prompt) return json(res, 400, { error: 'a background agent needs a task' });
-        startBackgroundRun({ id, cwd, prompt, persona, role });
+        startBackgroundRun({ id, cwd, prompt, persona, role, todoId });
         if (todoId) await boardOp('update', { id: todoId, sessionId: id, status: 'doing' }).catch(() => {});
         return json(res, 200, { id, background: true });
       }
       const name = persona?.name ? ` -n ${shq(persona.name)}` : '';
-      const style = persona?.workStyle ? ` --append-system-prompt ${shq(persona.workStyle)}` : '';
+      const style = officePrompt(persona?.workStyle);
       await openTerminal(`cd ${shq(cwd)} && claude --session-id ${id}${name}${style}${prompt ? ` ${shq(prompt)}` : ''}`);
       if (todoId) await boardOp('update', { id: todoId, sessionId: id, status: 'doing' }).catch(() => {});
       return json(res, 200, { id });
@@ -1043,8 +1053,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/open\/([\w-]+)$/))) {
       const d = await sessionDetail(m[1]);
       if (!d) return json(res, 404, { error: 'not found' });
-      const ws = d.personality?.impact !== false && d.personality?.workStyle;
-      await openTerminal(`cd ${shq(d.cwd || os.homedir())} && claude --resume ${d.id}${ws ? ` --append-system-prompt ${shq(ws)}` : ''}`);
+      const ws = d.personality?.impact !== false ? d.personality?.workStyle : '';
+      await openTerminal(`cd ${shq(d.cwd || os.homedir())} && claude --resume ${d.id}${officePrompt(ws)}`);
       return json(res, 200, { ok: true });
     }
     if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/end\/([\w-]+)$/))) {
@@ -1067,4 +1077,5 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+mcpStatus().catch(() => {});
 server.listen(PORT, '127.0.0.1', () => console.log(`Agent Office${DEMO ? ' (demo mode)' : ''} open at http://localhost:${PORT}`));
