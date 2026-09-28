@@ -201,3 +201,16 @@ export const DEMO_PLAN = {
     { title: 'Review the docs PRs once Radia is done', project: 'docs-site', notes: '', why: 'They have been open for two days.' },
   ],
 };
+
+// Ask conversations in demo mode (kept in memory)
+const chats = {};
+export const demoChat = id => chats[id] || { current: [], archived: [] };
+export function demoChatOp(id, b) {
+  const c = chats[id] ||= { current: [], archived: [] };
+  if (b.op === 'append') c.current.push(...(b.messages || []));
+  if (b.op === 'clear') c.current = [];
+  if (b.op === 'archive' && c.current.length) { c.archived.unshift({ at: Date.now(), messages: c.current }); c.current = []; }
+  if (b.op === 'deleteArchived') c.archived.splice(Number(b.index), 1);
+  if (b.op === 'deleteAll') delete chats[id];
+  return chats[id] || { current: [], archived: [] };
+}

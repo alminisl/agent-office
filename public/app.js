@@ -1402,7 +1402,16 @@ function ago(t) {
 
 // ---------------- panel ----------------
 let detail = null;
-const chats = new Map(); // id -> [{who, text}]
+const chats = new Map();    // id -> current conversation [{ who, text, at }] (saved on the server)
+const archivedChats = new Map(); // id -> [{ at, messages }]
+async function loadChat(id) {
+  try {
+    const c = await (await fetch(`/api/chat/${id}`)).json();
+    chats.set(id, c.current || []); archivedChats.set(id, c.archived || []);
+  } catch {}
+  if (selectedId === id) renderChat();
+}
+const chatOp = (id, body) => post(`/api/chat/${id}`, body).then(c => { chats.set(id, c.current || []); archivedChats.set(id, c.archived || []); if (selectedId === id) renderChat(); });
 
 async function select(id, doCopy) {
   const a = agents.get(id);
@@ -1414,7 +1423,7 @@ async function select(id, doCopy) {
   resize();
   if (doCopy) copy(resumeCmd(a.session));
   updatePanelHeader();
-  if (switching) { renderChat(); fillPersonaForm(); $('#tab-work').innerHTML = '<p class="muted">Loading…</p>'; }
+  if (switching) { renderChat(); fillPersonaForm(); loadChat(id); $('#tab-work').innerHTML = '<p class="muted">Loading…</p>'; }
   document.body.classList.toggle('pm-selected', id === 'pm');
   if (id === 'pm') { detail = null; renderPMWork(); return; }
   const res = await fetch(`/api/session/${id}`).catch(() => null);
@@ -1461,6 +1470,7 @@ function updatePanelHeader() {
   ].join('');
   $('#endBtn').hidden = !s.live;
   $('#hideBtn').hidden = s.live;
+  $('#deleteBtn').hidden = s.live || a.id === 'pm';
   $('#openBtn').hidden = s.live;
   $('#pTitle').textContent = s.title;
   $('#pDoing').textContent = a.statusText();
@@ -1611,10 +1621,21 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 });
 
 // ask
+const msgHtml = m => `<div class="msg md ${m.who}${m.thinking ? ' thinking' : ''}">${m.who === 'them' ? md(m.text) : escapeHtml(m.text)}</div>`;
 function renderChat() {
-  const log = chats.get(selectedId) || [];
-  $('#chat').innerHTML = log.map(m => `<div class="msg md ${m.who}${m.thinking ? ' thinking' : ''}">${m.who === 'them' ? md(m.text) : escapeHtml(m.text)}</div>`).join('');
+  const log = chats.get(selectedId) || [], archived = archivedChats.get(selectedId) || [];
+  $('#chat').innerHTML = log.map(msgHtml).join('');
+  const n = log.filter(m => m.who === 'me').length;
+  $('#chatCount').textContent = n ? `${n} question${n > 1 ? 's' : ''} in this conversation` : 'No conversation yet';
+  $('#chatArchive').disabled = $('#chatClear').disabled = !log.length || !!agents.get(selectedId)?.thinking; // not while an answer is coming in
+  const box = $('#chatArchived');
+  box.hidden = !archived.length;
+  box.querySelector('summary').textContent = `🗄 Archived conversations (${archived.length})`;
+  $('#chatArchivedList').innerHTML = archived.map((c, i) => `<div class="archived"><div class="archived-head"><span class="muted small">${new Date(c.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${c.messages.filter(m => m.who === 'me').length} questions</span><button data-del="${i}" data-tip="Delete this archived conversation">🗑</button></div>${c.messages.map(msgHtml).join('')}</div>`).join('');
+  $('#chatArchivedList').querySelectorAll('[data-del]').forEach(b => b.onclick = () => chatOp(selectedId, { op: 'deleteArchived', index: Number(b.dataset.del) }));
 }
+$('#chatClear').onclick = () => selectedId && chatOp(selectedId, { op: 'clear' }).then(() => toast('Conversation cleared.'));
+$('#chatArchive').onclick = () => selectedId && chatOp(selectedId, { op: 'archive' }).then(() => toast('🗄 Conversation archived. Starting fresh.'));
 
 async function ask(question) {
   const id = selectedId, a = agents.get(id);
@@ -1654,6 +1675,7 @@ async function ask(question) {
   reply.thinking = false;
   a.thinking = false;
   if (selectedId === id) renderChat();
+  if (!reply.text.startsWith('⚠️')) post(`/api/chat/${id}`, { op: 'append', messages: [{ who: 'me', text: question, at: started }, { who: 'them', text: reply.text, at: Date.now() }] }).catch(() => {});
 }
 $('#askForm').onsubmit = e => { e.preventDefault(); const q = $('#askInput').value.trim(); if (q) { $('#askInput').value = ''; ask(q); } };
 document.querySelectorAll('.quick button').forEach(b => b.onclick = () => ask(b.dataset.q));
@@ -2037,6 +2059,23 @@ async function hideSelected() {
   closePanel(); refresh();
 }
 $('#hideBtn').onclick = hideSelected;
+$('#deleteBtn').onclick = () => {
+  const a = agents.get(selectedId); if (!a) return;
+  $('#deleteName').textContent = a.persona.name;
+  $('#deleteForm').trash.checked = false;
+  $('#deleteModal').hidden = false;
+};
+$('#deleteForm').onsubmit = async e => {
+  e.preventDefault();
+  const a = agents.get(selectedId); if (!a) return;
+  try {
+    const r = await post(`/api/delete/${a.id}`, { trashTranscript: e.target.trash.checked });
+    chats.delete(a.id); archivedChats.delete(a.id);
+    $('#deleteModal').hidden = true;
+    toast(`🗑 ${escapeHtml(a.persona.name)} was deleted${r.trashed ? ' and their transcript moved to the Trash' : ''}.`);
+    closePanel(); refresh();
+  } catch (err) { toast(`Could not delete: ${escapeHtml(err.message)}`); }
+};
 
 // new session
 $('#newPreset').innerHTML = presetOptions();

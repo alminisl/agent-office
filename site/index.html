@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Office</title>
+  <meta name="description" content="A pixel-art office where your Claude Code sessions come to life as coworkers: live status, standups, a TODO board, a Product Manager, and agents that hire agents.">
+  <meta property="og:title" content="Agent Office">
+  <meta property="og:description" content="Your Claude Code sessions as pixel-art coworkers.">
+  <meta property="og:image" content="docs/office.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg: #1d1b26; --panel: #262433; --panel-2: #2f2c3f; --text: #ece8f5; --muted: #a39db8; --accent: #d97757; --border: #3a3650; --green: #4cd964; --yellow: #f5b83d; --purple: #c792ff; }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 Inter, system-ui, sans-serif; }
+    a { color: var(--accent); }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+    nav { display: flex; align-items: center; gap: 20px; padding: 18px 0; }
+    .logo { font: 18px Silkscreen, monospace; color: var(--accent); text-decoration: none; letter-spacing: 1px; }
+    nav .links { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+    nav .links a { color: var(--muted); text-decoration: none; }
+    nav .links a:hover { color: var(--text); }
+    .hero { text-align: center; padding: 48px 0 28px; }
+    .badge { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 99px; padding: 4px 12px; margin-bottom: 18px; }
+    h1 { font: clamp(34px, 6vw, 60px)/1.1 Silkscreen, monospace; margin: 0 0 18px; letter-spacing: 1px; }
+    h1 span { color: var(--accent); }
+    .lead { font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); max-width: 720px; margin: 0 auto 28px; }
+    .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 10px; font-weight: 600; text-decoration: none; border: 1px solid var(--border); color: var(--text); background: var(--panel-2); transition: transform .15s, border-color .15s; }
+    .btn:hover { transform: translateY(-2px); border-color: var(--accent); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #1d1b26; }
+    .window { margin: 40px auto 0; max-width: 980px; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--panel); box-shadow: 0 30px 80px rgba(0,0,0,.45); }
+    .window .bar { display: flex; gap: 6px; padding: 10px 12px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+    .window .bar i { width: 11px; height: 11px; border-radius: 50%; background: #ff6b6b; } .window .bar i:nth-child(2) { background: var(--yellow); } .window .bar i:nth-child(3) { background: var(--green); }
+    .window img { display: block; width: 100%; image-rendering: pixelated; }
+    section { padding: 70px 0 10px; }
+    h2 { font: 26px Silkscreen, monospace; margin: 0 0 8px; color: var(--accent); }
+    .sub { color: var(--muted); margin: 0 0 28px; max-width: 760px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .card .ico { font-size: 26px; }
+    .card h3 { margin: 8px 0 6px; font-size: 16px; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; }
+    .status { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 99px; padding: 5px 12px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; }
+    .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .shots figure { margin: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .shots img { display: block; width: 100%; }
+    .shots figcaption { padding: 10px 14px; font-size: 13px; color: var(--muted); }
+    .shots figcaption b { color: var(--text); }
+    pre { background: #111018; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; overflow-x: auto; font: 14px/1.7 ui-monospace, Menlo, monospace; position: relative; }
+    pre .c { color: var(--muted); }
+    .copy { position: absolute; top: 10px; right: 10px; font: 12px Inter, sans-serif; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+    ul.check { list-style: none; padding: 0; margin: 0; }
+    ul.check li { padding: 6px 0 6px 28px; position: relative; color: var(--muted); }
+    ul.check li::before { content: '✓'; position: absolute; left: 4px; color: var(--green); font-weight: 700; }
+    ul.check li b { color: var(--text); }
+    footer { margin-top: 80px; padding: 30px 0 50px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 12px 24px; }
+    footer .sp { margin-left: auto; }
+    @media (max-width: 760px) { .two { grid-template-columns: 1fr; } nav .links a.hide-sm { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <a class="logo" href="#">Agent Office</a>
+      <div class="links">
+        <a href="#features" class="hide-sm">Features</a>
+        <a href="#screens" class="hide-sm">Screenshots</a>
+        <a href="#start">Quick start</a>
+        <a href="https://github.com/alminisl/agent-office">GitHub</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <div class="badge">Open source · zero dependencies · runs locally</div>
+      <h1>Your Claude Code sessions,<br><span>as coworkers.</span></h1>
+      <p class="lead">Agent Office turns every Claude Code session into a pixel-art employee with a desk, a status and a personality. See at a glance who's working, who's waiting for you and what everyone did today, and jump back into any session with one click.</p>
+      <div class="cta">
+        <a class="btn primary" href="demo/">🎮 Try the live demo</a>
+        <a class="btn" href="https://github.com/alminisl/agent-office">⭐ View on GitHub</a>
+        <a class="btn" href="#start">⚡ Quick start</a>
+      </div>
+      <div class="window"><div class="bar"><i></i><i></i><i></i></div><img src="docs/office.gif" alt="The Agent Office: agents working at their cubicles, taking breaks in the kitchen, gym and game room"></div>
+      <div class="status" style="justify-content:center">
+        <span class="pill"><span class="dot" style="background:var(--green)"></span>Busy: typing, the bubble shows the tool</span>
+        <span class="pill"><span class="dot" style="background:var(--yellow)"></span>Waiting: hand raised, needs you</span>
+        <span class="pill"><span class="dot" style="background:var(--purple)"></span>Your turn: waiting for your reply</span>
+        <span class="pill"><span class="dot" style="background:#6fb7ff"></span>Idle: on a break</span>
+        <span class="pill"><span class="dot" style="background:#7a7590"></span>Out of office</span>
+      </div>
+    </header>
+
+    <section id="features">
+      <h2>What's inside</h2>
+      <p class="sub">It started as a toy. Then the toy kept turning out to be useful.</p>
+      <div class="grid">
+        <div class="card"><div class="ico">🏢</div><h3>A living office</h3><p>Cubicles grouped by project, private offices from level 5, a kitchen, gym, game room, lounge and meeting room. Agents take breaks, gossip about real events, make friends and celebrate each other's wins.</p></div>
+        <div class="card"><div class="ico">👀</div><h3>Status at a glance</h3><p>Live status from Claude Code: who's busy (and on what), who needs a permission, who's waiting for your reply, and how full everyone's context window is.</p></div>
+        <div class="card"><div class="ico">👔</div><h3>A Product Manager</h3><p>Morgan knows what every agent is doing. Ask "what's blocked?" or let them plan your day. Their suggestions become board cards in one click.</p></div>
+        <div class="card"><div class="ico">📋</div><h3>A shared TODO board</h3><p>To do / In progress / Done. Hand cards to agents, hire someone for them, and watch cards move on their own. Agents can read and add to the board too.</p></div>
+        <div class="card"><div class="ico">🧍</div><h3>Daily standup</h3><p>One key sends everyone to the meeting room and writes a summary of the day, what needs your attention, and yesterday / today / blockers per agent.</p></div>
+        <div class="card"><div class="ico">🔧</div><h3>Roles &amp; agents that hire</h3><p>PR Reviewer, QA Tester, Bug Hunter, Security Auditor, Docs Reviewer, and a Fixer that works on its own git branch. Senior agents can hire helpers themselves.</p></div>
+        <div class="card"><div class="ico">🤝</div><h3>Handoffs</h3><p>Drag one agent's report onto another: "Bug Hunter found this, Dwight fix it". It opens with the report as the first task.</p></div>
+        <div class="card"><div class="ico">⏱️</div><h3>Replay the day</h3><p>Scrub through the last 24 hours and watch who was working when, rebuilt from the transcripts.</p></div>
+        <div class="card"><div class="ico">🎭</div><h3>Personalities that matter</h3><p>Grizzled Senior, Noir Detective, the Dunder Mifflin crew… They change how agents behave in the office and, optionally, how they work in Claude Code.</p></div>
+      </div>
+    </section>
+
+    <section id="screens">
+      <h2>Screenshots</h2>
+      <p class="sub">Every screenshot and the live demo use a made-up office, so no real session data is shown.</p>
+      <div class="shots">
+        <figure><img src="docs/agent-panel.jpg" alt="Agent panel with a QA report" loading="lazy"><figcaption><b>Agent panel.</b> A QA Tester that ran in the background and handed in a report.</figcaption></figure>
+        <figure><img src="docs/dashboard.jpg" alt="Office dashboard" loading="lazy"><figcaption><b>Dashboard.</b> Spend, work time, who's working and who needs you.</figcaption></figure>
+        <figure><img src="docs/standup.jpg" alt="Daily standup in the meeting room" loading="lazy"><figcaption><b>Standup.</b> Everyone in the meeting room, with a summary of the day.</figcaption></figure>
+        <figure><img src="docs/replay.jpg" alt="Timeline replay" loading="lazy"><figcaption><b>Replay.</b> Watch the day happen again.</figcaption></figure>
+        <figure><img src="docs/night.jpg" alt="Night mode" loading="lazy"><figcaption><b>Night shift.</b> Lighting follows your clock.</figcaption></figure>
+        <figure><img src="docs/matrix.jpg" alt="Matrix mode" loading="lazy"><figcaption><b>Matrix mode.</b> Follow the white rabbit.</figcaption></figure>
+      </div>
+    </section>
+
+    <section id="start">
+      <h2>Quick start</h2>
+      <p class="sub">You need Node 18+ and Claude Code. There's nothing to install: no dependencies and no build step.</p>
+      <pre><button class="copy" data-copy="git clone https://github.com/alminisl/agent-office && cd agent-office && npm start">Copy</button><span class="c"># your own sessions</span>
+git clone https://github.com/alminisl/agent-office && cd agent-office && npm start
+<span class="c"># then open http://localhost:4747 and press ? for the tour</span>
+
+<span class="c"># or try the made-up demo office</span>
+npm run demo</pre>
+      <div class="two">
+        <div>
+          <h3>How it works</h3>
+          <ul class="check">
+            <li><b>Reads what Claude Code already writes</b>: transcripts in <code>~/.claude/projects</code> and live status in <code>~/.claude/sessions</code>.</li>
+            <li><b>One small Node server</b> plus a canvas front end. Every sprite is drawn in code.</li>
+            <li><b>Optional office tools</b> (an MCP server) let your sessions read the board, see the office and hire coworkers.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Privacy</h3>
+          <ul class="check">
+            <li><b>Runs on 127.0.0.1 only.</b> Your transcripts never leave your machine through Agent Office.</li>
+            <li><b>Asking an agent never touches the real session</b>: answers come from a briefing or a forked copy.</li>
+            <li><b>Background agents get fixed, minimal tools.</b> Fixers work on their own branch and never push.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span>Agent Office is an unofficial fan project, not affiliated with Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic.</span>
+      <span class="sp"><a href="https://github.com/alminisl/agent-office">GitHub</a> · <a href="demo/">Live demo</a></span>
+    </footer>
+  </div>
+  <script>
+    document.querySelectorAll('.copy').forEach(b => b.onclick = () => navigator.clipboard.writeText(b.dataset.copy).then(() => { b.textContent = 'Copied!'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); }));
+  </script>
+</body>
+</html>

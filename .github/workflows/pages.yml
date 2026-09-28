@@ -1,0 +1,46 @@
+# Publishes the landing page and a live, in-browser demo of the office to GitHub Pages.
+# The demo is the real app (public/) with site/static-demo.js answering its /api calls
+# using the made-up office from demo.mjs, so no server is needed.
+name: GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the site
+        run: |
+          mkdir -p _site/demo _site/docs
+          cp site/index.html _site/
+          cp docs/*.jpg docs/*.gif _site/docs/
+          cp public/* _site/demo/
+          cp demo.mjs site/static-demo.js _site/demo/
+          # load the in-browser API before the app
+          sed -i 's|<script type="module" src="app.js"></script>|<script type="module" src="static-demo.js"></script>\n  <script type="module" src="app.js"></script>|' _site/demo/index.html
+          grep -q 'static-demo.js' _site/demo/index.html
+          touch _site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

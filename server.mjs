@@ -8,7 +8,7 @@ import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN } from './demo.mjs';
+import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp } from './demo.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -21,6 +21,7 @@ const HIDDEN_FILE = path.join(ROOT, 'data', 'hidden.json');
 const REPORTS_DIR = path.join(ROOT, 'data', 'reports');
 const SETTINGS_FILE = path.join(ROOT, 'data', 'settings.json');
 const BOARD_FILE = path.join(ROOT, 'data', 'board.json');
+const CHATS_FILE = path.join(ROOT, 'data', 'chats.json');
 const WORKTREES_DIR = path.join(os.homedir(), '.agent-office', 'worktrees');
 const DEFAULT_SETTINGS = { hiring: { enabled: true, minLevel: 5, maxActive: 3 } };
 // Which terminal opens sessions. macOS: iTerm or Terminal. Linux: the first one found of
@@ -352,6 +353,53 @@ async function pmPlan(persona) {
     child.on('close', () => (o.includes('{') ? resolve(o) : reject(new Error((e || o).slice(0, 300) || 'no answer'))));
   });
   return JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1));
+}
+
+// ---------- Ask conversations (saved, archivable, deleted with the agent) ----------
+// chats: { [agentId]: { current: [{ who, text, at }], archived: [{ at, messages }] } }
+const emptyChat = () => ({ current: [], archived: [] });
+async function loadChat(id) { const all = await readJson(CHATS_FILE, {}).catch(() => ({})); return all[id] || emptyChat(); }
+function chatOp(id, body) {
+  return updateJson(CHATS_FILE, {}, all => {
+    const c = all[id] ||= emptyChat();
+    if (body.op === 'append') c.current.push(...(body.messages || []).map(m => ({ who: m.who === 'me' ? 'me' : 'them', text: String(m.text || '').slice(0, 20000), at: m.at || Date.now() })));
+    else if (body.op === 'clear') c.current = [];
+    else if (body.op === 'archive') { if (c.current.length) c.archived.unshift({ at: Date.now(), messages: c.current }); c.current = []; }
+    else if (body.op === 'deleteArchived') c.archived.splice(Number(body.index), 1);
+    else if (body.op === 'deleteAll') { delete all[id]; return emptyChat(); }
+    c.archived = c.archived.slice(0, 50);
+    return c;
+  });
+}
+
+// Delete an agent from the office: everything the office stored about them, and optionally their
+// Claude Code transcript, which is moved to the Trash (recoverable) rather than deleted.
+async function deleteAgent(id, { trashTranscript = false } = {}) {
+  if ((await liveSessions()).has(id) || runs.get(id)?.state === 'running') throw Object.assign(new Error('That agent is still running. End the session first.'), { status: 409 });
+  await chatOp(id, { op: 'deleteAll' });
+  await savePersonality(id, { reset: true });
+  await fsp.rm(path.join(REPORTS_DIR, `${id}.json`), { force: true });
+  await updateJson(BOARD_FILE, { items: [] }, b => { for (const i of b.items || []) if (i.sessionId === id) i.sessionId = null; return b; });
+  runs.delete(id);
+  let trashed = null;
+  if (trashTranscript) {
+    const file = (await allTranscripts()).find(f => path.basename(f, '.jsonl') === id);
+    if (file) {
+      const trash = process.platform === 'darwin' ? path.join(os.homedir(), '.Trash') : path.join(os.homedir(), '.local', 'share', 'Trash', 'files');
+      await fsp.mkdir(trash, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      trashed = [];
+      for (const src of [file, file.replace(/\.jsonl$/, '')]) {
+        if (!fs.existsSync(src)) continue;
+        const dest = path.join(trash, `agent-office-${path.basename(src)}-${stamp}`);
+        await fsp.rename(src, dest).catch(async () => { await fsp.cp(src, dest, { recursive: true }); await fsp.rm(src, { recursive: true, force: true }); });
+        trashed.push(dest);
+      }
+      cache.delete(file);
+    }
+  }
+  if (!trashed) await setHidden(id, true); // keep it out of the office even though the transcript stays
+  return { ok: true, trashed };
 }
 
 // ---------- TODO board ----------
@@ -907,6 +955,7 @@ async function demoRoute(url, req, res) {
     return res.end();
   }
   if (url.pathname === '/api/pm/plan') return json(res, 200, DEMO_PLAN);
+  if ((m = url.pathname.match(/^\/api\/chat\/([\w-]+)$/))) return json(res, 200, req.method === 'POST' ? demoChatOp(m[1], await readBody(req)) : demoChat(m[1]));
   if (url.pathname === '/api/board') return json(res, 200, req.method === 'POST' ? demoBoardOp(await readBody(req)) : { items: demoBoard() });
   if (url.pathname === '/api/mcp') return json(res, 200, { installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
   if (url.pathname === '/api/timeline') return json(res, 200, demoTimeline(Number(url.searchParams.get('hours')) || 24));
@@ -974,6 +1023,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/agent\/(hire|hires|report|todo|overview)$/))) {
       try { return json(res, 200, await agentApi(m[1], await readBody(req))); }
       catch (e) { return json(res, e.status || 500, { error: e.message }); }
+    }
+    if ((m = url.pathname.match(/^\/api\/chat\/([\w-]+)$/))) {
+      if (req.method !== 'POST') return json(res, 200, await loadChat(m[1]));
+      return json(res, 200, await chatOp(m[1], await readBody(req)));
+    }
+    if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/delete\/([\w-]+)$/))) {
+      try { return json(res, 200, await deleteAgent(m[1], await readBody(req))); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
     }
     if (url.pathname === '/api/board') {
       if (req.method !== 'POST') return json(res, 200, await loadBoard());

@@ -4,6 +4,8 @@
 
 ![Agent Office: Claude Code sessions as pixel-art coworkers](docs/office.gif)
 
+**[🎮 Try the live demo](https://alminisl.github.io/agent-office/demo/)**: a made-up office that runs right in your browser. The **[project page](https://alminisl.github.io/agent-office/)** has an overview.
+
 When you run several Claude Code sessions at once, it gets hard to keep track of them: which one is busy, which one is waiting for your permission, which one finished ten minutes ago and is waiting on you. Agent Office reads the session data Claude Code already keeps on your machine and turns every session into a little pixel-art employee with a desk, a status, a personality and a career. You can see at a glance who needs you, jump back into any session with one click, and have some fun along the way.
 
 It is a single zero-dependency Node server plus a canvas front end. Every sprite is drawn procedurally in code; there are no image assets.
@@ -81,12 +83,13 @@ Press <kbd>D</kbd> for the office dashboard. Every card and section explains wha
 ### Session control
 - **Click an agent** to copy `cd <project> && claude --resume <id>` and open their panel:
   - **Work**: latest report, level, XP, context gauge, achievements, stats, latest replies, prompts and files touched.
-  - **Ask**: ask the agent a question. ⚡ *Quick* answers in seconds from a briefing of the session; 🧠 *Deep memory* asks a forked copy of the full conversation. The real session is never touched.
+  - **Ask**: ask the agent a question. Conversations are saved; **🗄 Archive** puts one away (still readable later) and **🗑 Clear** deletes it. ⚡ *Quick* answers in seconds from a briefing of the session; 🧠 *Deep memory* asks a forked copy of the full conversation. The real session is never touched.
   - **Personality**: name, preset, traits, hangout and look.
 - **New session**: opens a terminal (iTerm or Terminal on macOS; gnome-terminal, kitty, konsole, alacritty, wezterm, xfce4-terminal or xterm on Linux) running `claude --session-id <new id>` in the chosen folder, with the personality and role pre-assigned.
 - **Open in terminal**: resume a session in a new terminal window.
 - **End session**: stops a running `claude` process with SIGTERM (two-step confirm; the transcript is kept).
 - **Hide**: remove a cubicle from the office (bring it back later from Settings).
+- **Delete agent**: remove an agent that isn't running, together with everything the office saved about them (conversations, personality, report, board links). Optionally their Claude Code transcript is moved to the Trash (recoverable), not deleted.
 
 ### Easter eggs
 - Type `matrix` (or click the white rabbit that sometimes hops by) for digital rain and trench coats; type `bluepill` to leave. The Konami code works too.
@@ -235,6 +238,8 @@ public/
   sprites.js        Procedurally drawn pixel-art characters and furniture
   personas.js       Personality presets, names, looks and quirks
   style.css         Styles
+site/               GitHub Pages: landing page, plus static-demo.js, which runs the demo office in the browser
+.github/workflows/  Builds and publishes the GitHub Pages site on every push to main
 docs/               Screenshots and the GIF used in this README
 data/               Your personalities, hidden cubicles and reports (git-ignored)
 ```

@@ -296,3 +296,14 @@ body.pm-selected .not-pm, body.pm-selected .ask-mode, body.pm-selected .panel-ac
 .plan-item button { flex: none; }
 
 .rel { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+.chat-tools { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.chat-tools span { margin-right: auto; }
+.chat-tools button { font-size: 11px; padding: 3px 9px; }
+#chatArchived { margin: 4px 0 10px; font-size: 12px; }
+#chatArchived summary { cursor: pointer; color: var(--muted); }
+.archived { background: var(--panel-2); border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
+.archived-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.archived-head button { font-size: 11px; padding: 2px 8px; }
+.archived .msg { margin-top: 6px; font-size: 12px; }
+button.danger.primary { background: #c0392b; border-color: #c0392b; color: #fff; }

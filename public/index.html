@@ -52,6 +52,7 @@
           <button id="openBtn" title="Resume in a new terminal window (O)">🖥️ Open in terminal</button>
           <button id="endBtn" class="danger" title="Stop the running claude process (the transcript is kept)">⏹ End session</button>
           <button id="hideBtn" title="Remove this cubicle from the office (H)">🙈 Hide</button>
+          <button id="deleteBtn" class="danger" data-tip="Delete this agent from the office, with their conversations, personality and report.">🗑 Delete agent</button>
         </div>
       </div>
 
@@ -80,7 +81,13 @@
           <button data-q="Be honest: what do you think of the work so far? What worries you?">Your honest take</button>
           <button data-q="What should we do next, and what would you need from me?">What's next?</button>
         </div>
+        <div class="chat-tools">
+          <span class="muted small" id="chatCount"></span>
+          <button type="button" id="chatArchive" class="small" data-tip="Put this conversation away and start a fresh one. Archived conversations stay readable below.">🗄 Archive</button>
+          <button type="button" id="chatClear" class="small" data-tip="Delete this conversation.">🗑 Clear</button>
+        </div>
         <div id="chat"></div>
+        <details id="chatArchived" hidden><summary></summary><div id="chatArchivedList"></div></details>
         <form id="askForm">
           <input id="askInput" placeholder="Ask them anything…" autocomplete="off">
           <button type="submit">Ask</button>
@@ -290,6 +297,15 @@
       </div>
       <p class="muted small">Drag cards between columns. <b>🤝 Give</b> hands a card to an agent and <b>🏢 Hire</b> starts a new one for it. Cards move to <i>In progress</i> on their own, and background agents move them to <i>Done</i> when they finish. Connected agents can add and tick off items too.</p>
     </div>
+  </div>
+
+  <div id="deleteModal" class="modal" hidden>
+    <form id="deleteForm" class="card">
+      <h2>🗑 Delete <span id="deleteName"></span>?</h2>
+      <p>This removes them from the office, together with everything the office saved about them: <b>Ask conversations</b> (including archived ones), <b>personality</b>, <b>report</b>, and their links on the board (the cards stay).</p>
+      <label class="inline"><input type="checkbox" name="trash"> Also move their Claude Code transcript to the Trash <span class="muted small">(the session can't be resumed afterwards; you can restore it from the Trash)</span></label>
+      <div class="row"><button type="submit" class="danger primary">Delete agent</button><button type="button" class="ghost" data-close>Cancel</button></div>
+    </form>
   </div>
 
   <div id="handoffModal" class="modal" hidden>
