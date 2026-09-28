@@ -422,26 +422,65 @@ async function savePersonality(id, p) {
 }
 
 // ---------- ask an agent (forks the session so the original is untouched) ----------
-function askAgent(detail, question, res) {
-  const p = detail.personality || {};
-  const persona = [
+// Quick mode (default): a fast model answers from a short briefing built from the transcript.
+// Deep mode: resumes a fork of the full session. Complete memory, but it re-reads the whole
+// context, so it is slow and costly on big sessions.
+function briefing(d) {
+  const clip = (t, n) => (t.length > n ? `${t.slice(0, n)}…` : t);
+  return [
+    `Session title: ${d.title || 'untitled'}`,
+    `Project: ${d.cwd || 'unknown'}${d.gitBranch ? ` (branch ${d.gitBranch})` : ''}`,
+    `Status right now: ${d.status}${d.lastActivity ? `; last action: ${d.lastActivity.label}` : ''}`,
+    `Totals: ${Math.round((d.workMs || 0) / 60000)} min of work, ${d.toolCount} tool calls, +${d.linesAdded}/-${d.linesRemoved} lines, $${(d.cost || 0).toFixed(2)}`,
+    d.files?.length ? `Files edited: ${d.files.map(f => f.path.replace(`${d.cwd}/`, '')).join(', ')}` : '',
+    d.prs?.length ? `PRs: ${d.prs.map(p => p.url).join(', ')}` : '',
+    d.report ? `Report you handed in:\n${clip(d.report.result, 1500)}` : '',
+    'What the user asked you (oldest first):',
+    ...d.prompts.slice(-8).map(p => `- ${clip(p.text.replace(/\s+/g, ' '), 400)}`),
+    'Your most recent replies (oldest first):',
+    ...d.replies.slice(-5).map(r => `- ${clip(r.text.replace(/\s+/g, ' '), 900)}`),
+  ].filter(Boolean).join('\n');
+}
+
+function askAgent(detail, question, mode, persona, res) {
+  const p = { ...(detail.personality || {}), ...(persona || {}) };
+  const system = [
     'You are being interviewed inside "Agent Office", a playful visualization where each Claude Code session is an office worker.',
     `Your name is ${p.name || 'an unnamed agent'}.`,
     p.traits ? `Your personality: ${p.traits}. Stay fully in character (tone, quirks, catchphrases) while being accurate about the work.` : '',
-    'Answer from your memory of this session only. Do not run tools or change anything. Keep it conversational and under ~150 words unless asked for more.',
+    'Answer only from what you know about this session. Do not run tools or change anything. If you do not know, say so. Keep it conversational and under ~150 words unless asked for more.',
   ].filter(Boolean).join(' ');
 
-  const prompt = p.traits ? `[Office interview — answer in character as ${p.name || 'yourself'}, ${p.traits}]\n\n${question}` : question;
-  const args = ['-p', '--resume', detail.id, '--fork-session', '--no-session-persistence',
-    '--tools', '', '--append-system-prompt', persona, '--output-format', 'text', prompt];
-  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd: detail.cwd || os.homedir(), env: process.env });
+  const deep = mode === 'deep';
+  const prompt = deep
+    ? (p.traits ? `[Office interview: answer in character as ${p.name || 'yourself'}, ${p.traits}]\n\n${question}` : question)
+    : `Here is a briefing of the Claude Code session you are (it is your own work):\n\n${briefing(detail)}\n\nThe user asks: ${question}`;
+  const stream = ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
+  const args = deep
+    ? ['-p', prompt, '--resume', detail.id, '--fork-session', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream]
+    : ['-p', prompt, '--model', process.env.ASK_MODEL || 'haiku', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream];
+  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd: deep ? detail.cwd || os.homedir() : os.tmpdir(), env: process.env });
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' });
-  child.stdout.on('data', d => res.write(d));
-  let err = '';
+
+  let wrote = false, buf = '', err = '';
+  const timer = setTimeout(() => { child.kill(); res.end(`${wrote ? '\n\n' : ''}⏱️ No answer after ${deep ? 5 : 2} minutes, so I gave up. ${deep ? 'This session is large, so try Quick mode.' : ''}`); }, (deep ? 5 : 2) * 60e3);
+  child.stdout.on('data', chunk => {
+    buf += chunk;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 1);
+      let d; try { d = JSON.parse(line); } catch { continue; }
+      if (d.type === 'stream_event' && d.event?.delta?.type === 'text_delta') { res.write(d.event.delta.text); wrote = true; }
+      else if (d.type === 'result') {
+        if (!wrote && d.result) { res.write(d.result); wrote = true; }
+        if (d.is_error && !wrote) res.write(`⚠️ ${d.result || 'Claude returned an error'}`);
+      }
+    }
+  });
   child.stderr.on('data', d => { err += d; });
-  child.on('error', e => res.end(`\n[could not start claude: ${e.message}]`));
-  child.on('close', code => res.end(code ? `\n[claude exited ${code}] ${err.slice(0, 500)}` : ''));
-  res.on('close', () => { if (child.exitCode === null) child.kill(); });
+  child.on('error', e => { clearTimeout(timer); res.end(`⚠️ Could not start claude: ${e.message}`); });
+  child.on('close', code => { clearTimeout(timer); if (!res.writableEnded) res.end(code && !wrote ? `⚠️ claude exited with code ${code}. ${err.slice(0, 500)}` : ''); });
+  res.on('close', () => { clearTimeout(timer); if (child.exitCode === null) child.kill(); });
 }
 
 // ---------- personality quirks (generated by Claude from the traits) ----------
@@ -517,8 +556,8 @@ const server = http.createServer(async (req, res) => {
       const d = await sessionDetail(m[1]);
       if (!d) return json(res, 404, { error: 'This session no longer exists.' });
       if (d.empty) return json(res, 409, { error: "They haven't started talking yet. Ask again after their first reply." });
-      const { question } = await readBody(req);
-      return askAgent(d, String(question || 'What are you working on and what do you think of it?'), res);
+      const { question, mode, persona } = await readBody(req);
+      return askAgent(d, String(question || 'What are you working on and what do you think of it?'), mode, persona, res);
     }
     if (req.method === 'POST' && url.pathname === '/api/quirks') {
       const { name, traits } = await readBody(req);

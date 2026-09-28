@@ -824,6 +824,9 @@ function fmtTokens(n) { return n >= 1e6 ? `${(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}
 function renderWork() {
   const d = detail;
   if (!d) return;
+  $('#deepHint').textContent = d.context
+    ? `re-reads all ${fmtTokens(d.context)} tokens of the conversation (${d.context > 150000 ? 'slow and pricey for this one' : 'a bit slower, costs more'})`
+    : 're-reads the whole conversation (slower, costs more)';
   const prompts = [...d.prompts].reverse().slice(0, 6);
   const replies = [...d.replies].reverse().slice(0, 3);
   const pct = Math.min(1, (d.context || 0) / (d.contextWindow || 1));
@@ -890,12 +893,22 @@ async function ask(question) {
   const log = chats.get(id) || [];
   chats.set(id, log);
   log.push({ who: 'me', text: question });
+  const mode = document.querySelector('input[name=askMode]:checked')?.value || 'quick';
   const reply = { who: 'them', text: `${a.persona.name} is thinking…`, thinking: true };
   log.push(reply);
   renderChat();
   a.thinking = true;
+  // show that something is happening, and how long it takes
+  const started = Date.now();
+  const tick = setInterval(() => {
+    if (!reply.thinking) return clearInterval(tick);
+    const secs = Math.round((Date.now() - started) / 1000);
+    reply.text = `${a.persona.name} is thinking… ${secs}s${mode === 'deep' ? ' (deep memory: re-reading the whole conversation)' : ''}`;
+    if (selectedId === id) renderChat();
+  }, 1000);
   try {
-    const res = await fetch(`/api/ask/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
+    const { name, traits } = a.persona;
+    const res = await fetch(`/api/ask/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, mode, persona: { name, traits } }) });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `server said ${res.status}`);
     const reader = res.body.getReader(); const dec = new TextDecoder();
     let text = '';
@@ -908,6 +921,7 @@ async function ask(question) {
     }
     if (!text.trim()) reply.text = '(no answer)';
   } catch (e) { reply.text = `⚠️ ${e.message}`; }
+  clearInterval(tick);
   reply.thinking = false;
   a.thinking = false;
   if (selectedId === id) renderChat();

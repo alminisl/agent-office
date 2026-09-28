@@ -50,7 +50,7 @@ Press <kbd>D</kbd> for the office dashboard:
 ### Session control
 - **Click an agent** to copy `cd <project> && claude --resume <id>` and open their panel:
   - **Work**: latest report, level, XP, context gauge, achievements, stats, latest replies, prompts and files touched.
-  - **Ask**: ask a forked copy of the session a question. The real session is never touched.
+  - **Ask**: ask the agent a question. ⚡ *Quick* answers in seconds from a briefing of the session; 🧠 *Deep memory* asks a forked copy of the full conversation. The real session is never touched.
   - **Personality**: name, preset, traits, hangout and look.
 - **New session**: opens iTerm or Terminal running `claude --session-id <new id>` in the chosen folder, with the personality and role pre-assigned.
 - **Open in terminal**: resume a session in a new terminal window.
@@ -104,7 +104,9 @@ There is nothing to install: no dependencies, no build step.
 - **Sessions** come from the transcripts in `~/.claude/projects/**.jsonl` (the last 14 days, up to 20 cubicles; running sessions are always shown). Transcripts are parsed for titles, prompts, replies, tool calls, files, lines changed, PRs, cost and context usage, and cached by modification time.
 - **Live status** comes from `~/.claude/sessions`, which tells the office which sessions are running, busy or waiting.
 - **Helpers** are the subagent transcripts of a running session that were touched in the last 45 seconds.
-- **Ask** runs `claude -p --resume <id> --fork-session --no-session-persistence --tools ""`, so the question goes to a throwaway fork with no tools, and your original conversation is never modified. It uses your Claude account and can take a while on long sessions.
+- **Ask** has two modes, and both stream the answer word by word:
+  - ⚡ **Quick** (default): the server builds a short briefing from the transcript (task, recent prompts and replies, files touched, current activity) and asks a fast model (`ASK_MODEL`, default `haiku`) in character. It takes a few seconds whatever the session size.
+  - 🧠 **Deep memory**: `claude -p --resume <id> --fork-session --no-session-persistence --tools ""`, a throwaway fork of the full conversation with no tools. It has complete memory, but it re-reads the whole context, so it is slow and costs more on big sessions (the Ask tab shows how many tokens).
 - **Quirks** are generated with a small `claude -p --model haiku --tools ""` call.
 - **Background roles** run `claude -p` with `--allowedTools` decided on the server per role, never taken from the browser. Anything not on the list is denied automatically in print mode, so these agents can read and inspect, but not edit, push or merge:
   - All roles: `Read`, `Grep`, `Glob`, and `git log / diff / show / status / branch / fetch / blame`, `ls`.
@@ -126,6 +128,7 @@ All settings are optional environment variables:
 | `CLAUDE_DIR` | `~/.claude` | Where Claude Code keeps its data |
 | `CLAUDE_BIN` | `claude` | The Claude Code executable |
 | `OFFICE_TERMINAL` | `iTerm` if you run inside iTerm, else `Terminal` | Terminal app for New session / Open in terminal (`iTerm` or `Terminal`) |
+| `ASK_MODEL` | `haiku` | Model used by Quick mode in the Ask tab |
 | `CONTEXT_WINDOW` | `200000` (or 1M for `[1m]` models) | Context window size used for the context bar |
 | `DEMO` | unset | Set to `1` for demo mode (same as `--demo`) |
 
@@ -152,7 +155,7 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 
 - The server listens on `127.0.0.1` only and reads your Claude Code data locally. Your transcripts are never uploaded anywhere by Agent Office.
 - The only things that leave your machine are what Claude Code itself sends when you use **Ask**, **Generate quirks** or a **background role**, all of which run the regular `claude` CLI with your account. The page also loads its fonts from Google Fonts.
-- **Ask** always uses a forked, non-persistent copy of the session with all tools disabled.
+- **Ask** never writes to your session: Quick mode uses a separate, non-persistent prompt, and Deep mode uses a forked, non-persistent copy. Both run with all tools disabled.
 - **Background roles** get a fixed, read-only tool allowlist chosen on the server.
 - **End session** asks twice before sending SIGTERM, and only to a `claude` process.
 - Personal settings live in `data/`, which is git-ignored.

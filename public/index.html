@@ -53,7 +53,11 @@
       <section id="tab-work" class="tab"></section>
 
       <section id="tab-ask" class="tab" hidden>
-        <p class="muted small">Asks a forked copy of this session (your original conversation is untouched). Uses your Claude account.</p>
+        <div class="ask-mode">
+          <label class="inline"><input type="radio" name="askMode" value="quick" checked> ⚡ Quick <span class="muted small">answers from a briefing of the session in a few seconds</span></label>
+          <label class="inline"><input type="radio" name="askMode" value="deep"> 🧠 Deep memory <span class="muted small" id="deepHint">re-reads the whole conversation (slower, costs more)</span></label>
+        </div>
+        <p class="muted small">Your real conversation is never touched. Uses your Claude account.</p>
         <div class="quick">
           <button data-q="What are you working on right now, and how is it going?">What are you on?</button>
           <button data-q="Be honest: what do you think of the work so far? What worries you?">Your honest take</button>

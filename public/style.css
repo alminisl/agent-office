@@ -165,3 +165,7 @@ body.matrix h1, body.matrix #stats { color: #00ff66; text-shadow: 0 0 6px #00ff6
 .report.failed { background: #2a1f1f; border-color: #ff6b6b55; }
 .report-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .role-chip { font-size: 11px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 99px; padding: 1px 8px; margin-left: 6px; }
+
+.ask-mode { display: flex; flex-direction: column; gap: 4px; background: var(--panel-2); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+.ask-mode label { display: flex; gap: 6px; align-items: baseline; font-size: 13px; cursor: pointer; }
+.ask-mode input { width: auto; }
