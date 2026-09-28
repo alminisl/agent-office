@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Agent Office MCP server: gives Claude Code sessions tools to hire coworkers in the office.
+// Agent Office MCP server: gives Claude Code sessions tools to hire coworkers and use the office TODO board.
 // Registered with:  claude mcp add --scope user agent-office -- node /path/to/mcp.mjs
 // (Dashboard → Settings has a one-click button for this.)
 //
@@ -42,6 +42,39 @@ const TOOLS = [
     },
   },
   {
+    name: 'office_overview',
+    description: 'Get a live briefing of the whole Agent Office: every agent (Claude Code session) with their project, status, what they are doing, last messages and reports, plus the shared TODO board. Use it to coordinate, avoid duplicate work, or answer "what is everyone doing?".',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'todo_list',
+    description: 'List the items on the Agent Office TODO board that the user and other agents share (to do, in progress, and recently done).',
+    inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['todo', 'doing', 'done'], description: 'Only this column.' } } },
+  },
+  {
+    name: 'todo_add',
+    description: 'Add an item to the shared Agent Office TODO board, e.g. a follow-up you noticed but will not do now. Keep the title short; put details in notes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short title, like "Add tests for the retry logic".' },
+        notes: { type: 'string', description: 'Details: files, context, what done looks like.' },
+        status: { type: 'string', enum: ['todo', 'doing', 'done'], description: 'Default: todo.' },
+        assign_to_me: { type: 'boolean', description: 'Link the item to your session (for things you will do yourself).' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'todo_update',
+    description: 'Move an Agent Office TODO item to another column (todo, doing, done) and/or add a note to it.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, status: { type: 'string', enum: ['todo', 'doing', 'done'] }, note: { type: 'string', description: 'A short progress note.' } },
+      required: ['id'],
+    },
+  },
+  {
     name: 'list_my_hires',
     description: 'List the coworkers you hired in Agent Office, with their status (running, done, failed), role and branch.',
     inputSchema: { type: 'object', properties: {} },
@@ -64,6 +97,24 @@ async function callTool(name, args = {}) {
   if (name === 'hire_agent') {
     const r = await office('/api/agent/hire', args);
     return `Hired ${r.name} (${r.role}) as ${r.id}.${r.branch ? ` They work on branch ${r.branch} in ${r.worktree}.` : ''} They are walking to their desk in Agent Office now. Check on them with get_report("${r.id}").`;
+  }
+  if (name === 'office_overview') return (await office('/api/agent/overview', {})).text;
+  if (name === 'todo_list') {
+    const r = await office('/api/agent/todo', { op: 'list', status: args.status });
+    if (!r.items.length) return 'The board is empty.';
+    const label = { todo: 'To do', doing: 'In progress', done: 'Done' };
+    return ['todo', 'doing', 'done'].map(st => {
+      const items = r.items.filter(i => i.status === st);
+      return items.length ? `${label[st]}:\n${items.map(i => `- [${i.id}] ${i.title}${i.project ? ` (${i.project})` : ''}${i.by ? `, added by ${i.by}` : ''}`).join('\n')}` : '';
+    }).filter(Boolean).join('\n\n');
+  }
+  if (name === 'todo_add') {
+    const r = await office('/api/agent/todo', { op: 'add', ...args });
+    return `Added "${r.item.title}" to the board as ${r.item.id} (${r.item.status}).`;
+  }
+  if (name === 'todo_update') {
+    const r = await office('/api/agent/todo', { op: 'update', ...args });
+    return `Updated "${r.item.title}": now ${r.item.status}.`;
   }
   if (name === 'list_my_hires') {
     const r = await office('/api/agent/hires', {});

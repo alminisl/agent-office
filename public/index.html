@@ -14,6 +14,7 @@
     <div id="stats" data-tip="How many agents are busy, waiting for permission, waiting for your reply, idle, or out of office."></div>
     <div class="spacer"></div>
     <label class="toggle" data-tip="Show cubicles of sessions that are not running (out of office). Shortcut: S"><input type="checkbox" id="showOffline"> Show offline</label>
+    <button id="todoBtn" data-tip="The office TODO board: what still needs doing, what's in progress and what's done. Shortcut: B">📋 Board</button>
     <button id="standupBtn" data-tip="Daily standup: everyone walks to the meeting room and you get yesterday, today and blockers for everyone who worked today. Shortcut: M">🧍 Standup</button>
     <button id="replayBtn" data-tip="Replay the last 24 hours and watch who was working when. Shortcut: T">⏱️ Replay</button>
     <button id="boardBtn" data-tip="Office dashboard: overview, employees, leaderboard and settings. Shortcut: D">🏢 Dashboard</button>
@@ -68,7 +69,13 @@
           <label class="inline"><input type="radio" name="askMode" value="deep"> 🧠 Deep memory <span class="muted small" id="deepHint">re-reads the whole conversation (slower, costs more)</span></label>
         </div>
         <p class="muted small">Your real conversation is never touched. Uses your Claude account.</p>
-        <div class="quick">
+        <div class="quick pm-only">
+          <button data-q="Give me a quick status report on the whole office.">📊 Status report</button>
+          <button data-q="What's blocked right now, and what would unblock it?">🧱 What's blocked?</button>
+          <button data-q="What should I focus on today?">🎯 What should I focus on?</button>
+          <button data-q="Is anyone duplicating work, or working on something risky?">⚠️ Overlaps & risks</button>
+        </div>
+        <div class="quick not-pm">
           <button data-q="What are you working on right now, and how is it going?">What are you on?</button>
           <button data-q="Be honest: what do you think of the work so far? What worries you?">Your honest take</button>
           <button data-q="What should we do next, and what would you need from me?">What's next?</button>
@@ -218,6 +225,8 @@
           <p>Hire a <b>PR Reviewer</b>, <b>QA Tester</b>, <b>Bug Hunter</b>, <b>Security Auditor</b> or <b>Docs Reviewer</b> from <i>New session</i>. Let them work <i>inside the office</i> and they run in the background with read-only tools (QA roles may also run tests), then hand in a 📋 report.</p>
           <h3>Standups, handoffs & replay</h3>
           <p><b>🧍 Standup</b> sends everyone to the meeting room and writes yesterday, today and blockers for each agent. <b>🤝 Handoffs</b>: drag a report onto another agent to give them the job. <b>⏱️ Replay</b> plays back the last 24 hours. Themes and day/night lighting live in Dashboard → Settings.</p>
+          <h3>The PM and the board</h3>
+          <p>You're the boss. <b>👔 Morgan</b>, the Product Manager, sits in the meeting room and knows what everyone is doing: ask them anything or let them plan your day. The <b>📋 Board</b> (<kbd>B</kbd>) keeps the office's TODOs.</p>
           <h3>Agents hiring agents</h3>
           <p>Agents at level 5+ can hire coworkers themselves (connect them once in Dashboard → Settings). A 🔧 Fixer works on its own git branch; other roles are read-only and report back.</p>
           <h3>Helpers</h3>
@@ -238,6 +247,7 @@
           <ul class="keys">
             <li><kbd>?</kbd> this help</li>
             <li><kbd>N</kbd> hire a new agent (new session)</li>
+            <li><kbd>B</kbd> the office TODO board</li>
             <li><kbd>M</kbd> daily standup in the meeting room</li>
             <li><kbd>T</kbd> replay the last 24 hours (<kbd>Space</kbd> play / pause)</li>
             <li><kbd>D</kbd> office dashboard (costs, employees, leaderboard, settings)</li>
@@ -256,6 +266,27 @@
         </section>
       </div>
       <div class="row"><button class="primary" data-close>Got it</button></div>
+    </div>
+  </div>
+
+  <div id="todoModal" class="modal" hidden>
+    <div class="card kanban">
+      <div class="board-head">
+        <h2>📋 Office board</h2>
+        <span id="todoSummary" class="muted small"></span>
+        <button class="icon" data-close title="Close (Esc)">✕</button>
+      </div>
+      <form id="todoAdd" class="todo-add">
+        <input name="title" placeholder="Add a TODO… (e.g. Add tests for the retry logic)" maxlength="200" autocomplete="off" required>
+        <select name="project" id="todoProject" data-tip="Which project this is about (optional)"></select>
+        <button type="submit" class="primary">Add</button>
+      </form>
+      <div class="columns">
+        <section class="col" data-col="todo"><h3>To do <span class="count"></span></h3><div class="cards"></div></section>
+        <section class="col" data-col="doing"><h3>In progress <span class="count"></span></h3><div class="cards"></div></section>
+        <section class="col" data-col="done"><h3>Done <span class="count"></span></h3><div class="cards"></div><button id="todoClear" class="ghost small">Clear done older than a day</button></section>
+      </div>
+      <p class="muted small">Drag cards between columns. <b>🤝 Give</b> hands a card to an agent and <b>🏢 Hire</b> starts a new one for it. Cards move to <i>In progress</i> on their own, and background agents move them to <i>Done</i> when they finish. Connected agents can add and tick off items too.</p>
     </div>
   </div>
 

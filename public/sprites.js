@@ -497,3 +497,17 @@ FURNITURE.chair = (g, X, Y, o) => {
   g.fillStyle = '#4b4f58'; g.fillRect(X + 4, Y + 5, 8, 6);
   g.fillStyle = '#2b2d33'; if (o.dir === 'down') g.fillRect(X + 3, Y + 1, 10, 4); else g.fillRect(X + 3, Y + 11, 10, 4);
 };
+
+// Kanban board on the wall: three columns of sticky notes that follow the real board
+FURNITURE.kanban = (g, X, Y, o) => {
+  const w = o.w * T;
+  g.fillStyle = '#6b4526'; g.fillRect(X, Y + 1, w, 15);
+  g.fillStyle = '#e9e2cf'; g.fillRect(X + 1, Y + 2, w - 2, 13);
+  const colW = (w - 2) / 3, colors = ['#f5d76e', '#7fd1ff', '#6fdc8c'];
+  for (let c = 0; c < 3; c++) {
+    const cx = X + 1 + c * colW;
+    g.fillStyle = '#c9c0a8'; g.fillRect(cx + colW - 1, Y + 2, 1, 13);
+    const n = Math.min(6, o.counts?.[c] || 0);
+    for (let i = 0; i < n; i++) { g.fillStyle = colors[c]; g.fillRect(cx + 2 + (i % 2) * 9, Y + 4 + Math.floor(i / 2) * 4, 7, 3); }
+  }
+};

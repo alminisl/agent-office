@@ -256,3 +256,41 @@ button[data-tip], .feed [data-tip], th[data-sort][data-tip], label[data-tip] { c
 .settings .pack .row { align-items: center; flex-wrap: wrap; }
 .settings details { margin-top: 2px; }
 .settings details code { display: block; white-space: pre-wrap; word-break: break-all; margin-top: 6px; }
+
+/* ---- TODO board ---- */
+.card.kanban { width: min(1180px, 100%); max-height: 90vh; }
+.todo-add { display: flex; gap: 8px; }
+.todo-add input { flex: 1; }
+.todo-add select { width: 200px; }
+.columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; min-height: 300px; }
+.col { background: var(--panel-2); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.col h3 { margin: 0 0 2px; font: 12px Silkscreen, monospace; color: var(--muted); display: flex; justify-content: space-between; }
+.col[data-col=todo] h3 { color: #f5d76e; } .col[data-col=doing] h3 { color: #7fd1ff; } .col[data-col=done] h3 { color: #4cd964; }
+.col.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.cards { display: flex; flex-direction: column; gap: 8px; min-height: 60px; flex: 1; }
+.todo { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; cursor: grab; }
+.todo.dragging { opacity: 0.4; }
+.todo .t { font-weight: 600; font-size: 13px; line-height: 1.35; word-break: break-word; }
+.todo.done .t { text-decoration: line-through; color: var(--muted); }
+.todo .notes { font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-word; max-height: 90px; overflow: auto; }
+.todo .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 11px; color: var(--muted); }
+.todo .who { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text); }
+.todo .who canvas { image-rendering: pixelated; }
+.todo .acts { display: flex; flex-wrap: wrap; gap: 4px; }
+.todo .acts button { font-size: 11px; padding: 2px 7px; }
+.todo input, .todo textarea { font-size: 12px; }
+@media (max-width: 800px) { .columns { grid-template-columns: 1fr; } .todo-add { flex-wrap: wrap; } }
+
+.stat-card .info { font-size: 11px; opacity: 0.55; }
+.stat-card:hover .info { opacity: 1; color: var(--accent); }
+.board-head .icon { margin-left: auto; }
+
+/* ---- Product Manager ---- */
+.pm-only { display: none !important; }
+body.pm-selected .pm-only { display: flex !important; }
+body.pm-selected .not-pm, body.pm-selected .ask-mode, body.pm-selected .panel-actions { display: none !important; }
+.pm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.plan { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.plan p { margin: 0; font-size: 13px; }
+.plan-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-top: 1px solid var(--border); padding-top: 8px; font-size: 13px; }
+.plan-item button { flex: none; }

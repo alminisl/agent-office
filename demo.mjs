@@ -157,3 +157,47 @@ export function demoTimeline(hours = 24) {
   }).filter(s => s.turns.length);
   return { from, to: now, sessions };
 }
+
+// A sample TODO board for demo mode (kept in memory)
+let board = null;
+export function demoBoard() {
+  if (board) return board;
+  const ids = demoSessions().map(s => s.id), t = m => Date.now() - m * 60000;
+  board = [
+    { id: 'd1', title: 'Fix the rate limiter clock injection', notes: 'From the QA report: TestBurst fails on slow CI.', project: 'api-gateway', status: 'todo', sessionId: null, by: 'Frances', createdAt: t(40), updatedAt: t(40), doneAt: null },
+    { id: 'd2', title: 'Add a health check test', notes: '', project: 'api-gateway', status: 'todo', sessionId: null, by: 'you', createdAt: t(35), updatedAt: t(35), doneAt: null },
+    { id: 'd3', title: 'Dark mode for the storefront', notes: 'Waiting on design tokens.', project: 'pixel-shop', status: 'todo', sessionId: null, by: 'you', createdAt: t(300), updatedAt: t(300), doneAt: null },
+    { id: 'd4', title: 'Review the open docs PRs', notes: '', project: 'docs-site', status: 'doing', sessionId: ids[7], by: 'you', createdAt: t(90), updatedAt: t(20), doneAt: null },
+    { id: 'd5', title: 'Backfill the feature store', notes: '', project: 'ml-pipeline', status: 'doing', sessionId: ids[9], by: 'you', createdAt: t(200), updatedAt: t(60), doneAt: null },
+    { id: 'd6', title: 'Run the full test suite', notes: '3 failures, see the report.', project: 'api-gateway', status: 'done', sessionId: ids[4], by: 'you', createdAt: t(180), updatedAt: t(30), doneAt: t(30) },
+    { id: 'd7', title: 'Track down the flaky cart tests', notes: '', project: 'pixel-shop', status: 'done', sessionId: ids[1], by: 'you', createdAt: t(400), updatedAt: t(120), doneAt: t(120) },
+  ];
+  return board;
+}
+export function demoBoardOp(b) {
+  const items = demoBoard(), now = Date.now();
+  if (b.op === 'add') { const it = { id: `d${now}`, title: String(b.title || 'Untitled'), notes: b.notes || '', project: b.project || '', status: b.status || 'todo', sessionId: b.sessionId || null, by: 'you', createdAt: now, updatedAt: now, doneAt: b.status === 'done' ? now : null }; items.push(it); return it; }
+  const it = items.find(i => i.id === b.id);
+  if (!it) return { error: 'not found' };
+  if (b.op === 'delete') { board = items.filter(i => i !== it); return { ok: true }; }
+  for (const k of ['title', 'notes', 'project', 'sessionId']) if (b[k] !== undefined) it[k] = b[k];
+  if (b.status && b.status !== it.status) { it.status = b.status; it.doneAt = b.status === 'done' ? now : null; }
+  it.updatedAt = now;
+  return it;
+}
+
+export const DEMO_PM = `**Quick status:** 5 agents are working, and 2 are waiting on you.
+
+- **Blocked:** Ada (pixel-shop) needs permission to run \`npm test\`, and Frances (api-gateway) finished the QA run and is waiting for your go-ahead on the fixes.
+- **Moving well:** Dennis is backfilling the feature store, and Linus is updating the getting-started guide.
+- **Risk:** the rate limiter bug from Frances' report will keep CI flaky until it's fixed.
+
+**Suggested next step:** approve Ada's test run, then hand Frances' report to a Fixer.`;
+export const DEMO_PLAN = {
+  summary: 'The office is busy but two agents are blocked on you. Unblock them first, then turn the QA findings into fixes so CI stops flaking.',
+  items: [
+    { title: "Approve Ada's npm test run", project: 'pixel-shop', notes: 'She is waiting on a permission prompt.', why: 'It unblocks the flaky cart test fix.' },
+    { title: 'Hand the rate limiter findings to a Fixer', project: 'api-gateway', notes: 'Use the QA report from Frances as the task.', why: 'The failing tests make CI unreliable for everyone.' },
+    { title: 'Review the docs PRs once Radia is done', project: 'docs-site', notes: '', why: 'They have been open for two days.' },
+  ],
+};

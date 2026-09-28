@@ -45,6 +45,13 @@ Live status comes from `~/.claude/sessions`:
 - Hire a **PR Reviewer**, **QA Tester**, **Bug Hunter**, **Security Auditor** or **Docs Reviewer** from *New session*.
 - Run them interactively in a terminal, or **inside the office**: a background `claude -p` run with read-only tools that hands in a 📋 report, shown in the agent's panel.
 
+### The Product Manager and the TODO board
+- **You're the boss, and 👔 Morgan the Product Manager works for you.** Morgan is a permanent resident with a desk in the meeting room, and hosts the standups. Each time you ask something, the office sends a fresh briefing of every agent (status, what they're doing, recent messages, reports) and the board, so the PM always knows what everyone is working on.
+  - **Ask the PM** anything: "What's blocked?", "What should I focus on today?", "Is anyone duplicating work?".
+  - **🗓️ Plan my day** suggests today's priorities as board cards you can add with one click.
+  - **🖥️ Start a PM session** opens a real Claude session as the PM, which can manage the office through the agent-office tools (read the office, update the board, hire agents).
+- **📋 Office board** (<kbd>B</kbd>, or click the sticky-note board on the meeting-room wall): To do / In progress / Done. Add cards, drag them between columns, and **🤝 Give** a card to an agent or **🏢 Hire** someone for it. Cards move to *In progress* on their own, and background agents move them to *Done* when they finish. Connected agents can add and tick off cards themselves, and the standup reports board progress.
+
 ### Standups, handoffs and replay
 - **Daily standup** (<kbd>M</kbd>): everyone in the office walks to the meeting room, and a summary streams in (in about 15 seconds). It opens with the day's exact totals and a short **summary of the day**, then what **needs your attention**, then *Yesterday / Today / Blockers* for each agent who actually worked that day (or in the last 24 hours before anyone has started).
 - **Handoffs**: drag a report (or a latest reply) from the panel onto another agent, or use 🤝 *Hand off*. You get an editable first task ("Bug Hunter found this, Dwight fix it"), and it opens in a terminal, either continuing the target's session (they keep their memory) or as a new session in their project with their personality.
@@ -52,7 +59,7 @@ Live status comes from `~/.claude/sessions`:
 
 ### Agents hiring agents
 Senior agents (level 5+ by default) can hire coworkers themselves, mid-task, to work in parallel:
-- Click **🔌 Connect to Claude Code** in Dashboard → Settings (or run the command shown there). It registers the bundled `agent-office` MCP server in your Claude Code user settings, and every session started afterwards gets three tools: `hire_agent`, `list_my_hires` and `get_report`.
+- Click **🔌 Connect to Claude Code** in Dashboard → Settings (or run the command shown there). It registers the bundled `agent-office` MCP server in your Claude Code user settings, and every session started afterwards gets the office tools: `hire_agent`, `list_my_hires`, `get_report`, `office_overview`, `todo_list`, `todo_add` and `todo_update`. Hiring needs the minimum level (a PM session may always hire); the board and overview tools are open to every connected agent.
 - A **🔧 Fixer** gets its own git branch (`office/<name>-<id>`) in a separate worktree under `~/.agent-office/worktrees`. It may edit, run tests and checks, and commit there, but never push. Your working copy and the senior agent's are never touched. Its report names the branch to review (`git diff HEAD...office/…`).
 - **PR Reviewer, QA Tester, Bug Hunter, Security Auditor** and **Docs Reviewer** hires are read-only, as in the office roles.
 - The office decides who may hire: it identifies the calling session from the MCP server's parent process, checks its level, and enforces a limit of active hires per agent (3 by default). You can change all of this, or switch hiring off, in Settings.
@@ -156,6 +163,7 @@ All settings are optional environment variables:
 | `OFFICE_TERMINAL` | macOS: `iTerm` if you run inside iTerm, else `Terminal`. Linux: the first of gnome-terminal, kitty, konsole, alacritty, wezterm, xfce4-terminal, xterm found on your PATH | Terminal used by New session, Open in terminal and handoffs |
 | `ASK_MODEL` | `haiku` | Model used by Quick mode in the Ask tab |
 | `STANDUP_MODEL` | `ASK_MODEL` | Model that writes the standup summary |
+| `PM_MODEL` | `sonnet` | Model the Product Manager answers with |
 | `CONTEXT_WINDOW` | `200000` (or 1M for `[1m]` models) | Context window size used for the context bar |
 | `DEMO` | unset | Set to `1` for demo mode (same as `--demo`) |
 
@@ -168,6 +176,7 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 | <kbd>?</kbd> | Help |
 | <kbd>N</kbd> | New session (hire an agent) |
 | <kbd>D</kbd> | Office dashboard |
+| <kbd>B</kbd> | Office TODO board |
 | <kbd>M</kbd> | Daily standup |
 | <kbd>T</kbd> | Replay the last 24 hours (<kbd>Space</kbd> to play / pause) |
 | <kbd>S</kbd> | Show / hide offline agents |
@@ -201,7 +210,7 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 
 ```
 server.mjs          Local HTTP server: parses ~/.claude, live status, XP, Ask, roles, hiring, terminal control
-mcp.mjs             MCP server that gives Claude Code sessions the hire_agent / list_my_hires / get_report tools
+mcp.mjs             MCP server with the office tools (hiring, reports, office overview, TODO board)
 demo.mjs            Made-up agents and projects for demo mode
 public/
   index.html        UI shell: header, side panel, dialogs, dashboard, help

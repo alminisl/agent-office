@@ -48,6 +48,22 @@ let BADGES = {};             // achievement id -> {icon, name, hint}
 const rand = (a, b) => a + Math.random() * (b - a);
 const choice = arr => arr[Math.floor(Math.random() * arr.length)];
 
+// ---------------- the Product Manager ----------------
+// A permanent resident with a desk in the meeting room. Not a Claude session: when you ask them
+// something, the server briefs a model on the whole office first.
+const PM_DEFAULT = { name: 'Morgan', preset: 'pm', role: 'pm', hangout: 'kitchen', skin: '#eab88f', hair: '#2c3e50', hairStyle: 'short', shirt: '#34495e', pants: '#2d2d2d', glasses: true,
+  traits: 'an organised, friendly product manager who keeps track of everyone\'s work, spots blockers early, speaks in clear priorities and loves a tidy board' };
+let pmPersonality = null;
+const pmSession = () => ({
+  id: 'pm', project: 'office', title: 'Product Manager', cwd: null, status: 'idle', live: true, statusSince: Date.now() - 3600e3,
+  level: 12, rank: 'Product Manager', xp: 0, levelXp: 0, nextXp: 1, context: 0, contextWindow: 1, badges: [], cost: 0, helpers: [], prs: 0, workMs: 0,
+  personality: { ...PM_DEFAULT, ...(pmPersonality || {}) },
+});
+async function loadPM() {
+  try { pmPersonality = await (await fetch('/api/personality/pm')).json(); } catch {}
+  if (!pmPersonality) { pmPersonality = { ...PM_DEFAULT }; post('/api/personality/pm', { replace: pmPersonality }).catch(() => {}); }
+}
+
 // ---------------- data ----------------
 async function refresh() {
   let fresh;
@@ -70,11 +86,13 @@ async function refresh() {
   if (changedSet || !world) rebuild();
   if (replay.on) applyReplay();
   else for (const s of sessions) agents.get(s.id)?.setSession(s);
+  agents.get('pm')?.setSession(pmSession(), true);
   syncHelpers();
   const top = [...allSessions].sort((a, b) => (b.xp || 0) - (a.xp || 0))[0];
   employeeOfMonth = top?.xp ? top.id : null;
   renderStats();
   if (selectedId) updatePanelHeader();
+  loadBoard();
   firstLoad = false;
 }
 
@@ -99,7 +117,7 @@ function persistDefaults(list) {
 }
 
 function rebuild() {
-  world = buildWorld(sessions);
+  world = buildWorld(sessions, { pm: pmSession() });
   buffer = document.createElement('canvas');
   buffer.width = world.W * T; buffer.height = world.H * T;
   bctx = buffer.getContext('2d'); bctx.imageSmoothingEnabled = false;
@@ -255,7 +273,7 @@ class Agent {
   pickActivity() {
     const fav = this.persona.hangout;
     const opts = [
-      ['desk', 1], ['kitchen', 2], ['gym', 1.4], ['games', 1.5], ['lounge', 1.5],
+      ['desk', this.id === 'pm' ? 6 : 1], ['kitchen', 2], ['gym', 1.4], ['games', 1.5], ['lounge', 1.5],
       ['wander', 1], ['chat', 1.2], ['visit', 1], ['office', 0.5],
     ].map(([k, w]) => [k, k === fav ? w * 3 : w]);
     let r = Math.random() * opts.reduce((s, o) => s + o[1], 0);
@@ -343,13 +361,17 @@ class Agent {
   statusText() {
     const label = this.baseStatus();
     const s = this.session;
-    const onBreakWaiting = s.live && s.status === 'idle' && !isYourTurn(s) && !this.away && !this.leaving && !this.thinking && this.task !== 'meeting';
+    const onBreakWaiting = s.live && s.status === 'idle' && !isYourTurn(s) && !this.away && !this.leaving && !this.thinking && this.task !== 'meeting' && this.id !== 'pm';
     return onBreakWaiting ? `${label} · waiting for you` : label;
   }
 
   baseStatus() {
     const s = this.session;
-    if (this.task === 'meeting') return this.path.length ? '🚶 Heading to the standup' : '🧍 In the standup';
+    if (this.task === 'meeting') return this.path.length ? '🚶 Heading to the standup' : this.id === 'pm' ? '🧍 Hosting the standup' : '🧍 In the standup';
+    if (this.id === 'pm') {
+      if (this.thinking) return '💭 Checking on everyone…';
+      if (this.spot?.zone === 'desk' && !this.path.length) return `📋 Keeping track of ${allSessions.filter(x => x.live).length} agents`;
+    }
     if (this.away) return '🌴 Out of office';
     if (this.leaving) return '👋 Heading home';
     if (this.thinking) return '💭 Answering your question';
@@ -566,6 +588,99 @@ $('#tlRange').oninput = e => {
 };
 window.addEventListener('resize', () => { if (replay.on) drawSparkline(); });
 
+// ---------------- TODO board ----------------
+let boardItems = [];
+async function loadBoard() {
+  try { boardItems = (await (await fetch('/api/board')).json()).items || []; } catch { return; }
+  if (world?.kanban) world.kanban.counts = ['todo', 'doing', 'done'].map(st => boardItems.filter(i => i.status === st).length);
+  if (!$('#todoModal').hidden) renderTodo();
+}
+const boardPost = body => post('/api/board', body).then(loadBoard).catch(e => toast(`Board: ${escapeHtml(e.message)}`));
+function todoCard(it) {
+  const s = it.sessionId && allSessions.find(x => x.id === it.sessionId), p = s && personaFor(s);
+  const next = { todo: ['doing', '▶ Start'], doing: ['done', '✓ Done'], done: ['todo', '↺ Reopen'] }[it.status];
+  const when = it.status === 'done' && it.doneAt ? `done ${ago(it.doneAt)}` : `added ${ago(it.createdAt)}`;
+  return `<div class="todo ${it.status}" draggable="true" data-todo="${it.id}" style="border-left-color:${it.project ? projectColor(it.project) : 'var(--border)'}">
+    <div class="t">${escapeHtml(it.title)}</div>
+    ${it.notes ? `<div class="notes">${escapeHtml(it.notes)}</div>` : ''}
+    <div class="meta">
+      ${it.project ? `<span class="pill">${escapeHtml(it.project)}</span>` : ''}
+      ${p ? `<span class="who" data-open="${s.id}" data-tip="Linked to ${escapeHtml(p.name)}. Click to open their panel."><canvas width="16" height="26" style="width:10px;height:16px" data-av="${s.id}"></canvas>${escapeHtml(p.name)}</span>` : ''}
+      <span data-tip="Who added it">by ${escapeHtml(it.by || 'you')}</span><span>· ${when}</span>
+    </div>
+    <div class="acts">
+      <button data-act="move" data-to="${next[0]}">${next[1]}</button>
+      ${it.status !== 'done' ? `<button data-act="give" data-tip="Hand this to an existing agent (opens their terminal)">🤝 Give</button><button data-act="hire" data-tip="Hire a new agent for this (e.g. a Fixer on its own branch)">🏢 Hire</button>` : ''}
+      <button data-act="edit" data-tip="Edit the title and notes">✎</button>
+      <button data-act="delete" data-tip="Delete this card">🗑</button>
+    </div>
+  </div>`;
+}
+function renderTodo() {
+  const cols = { todo: [], doing: [], done: [] };
+  for (const it of boardItems) (cols[it.status] || cols.todo).push(it);
+  cols.done.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+  for (const [k, list] of Object.entries(cols)) {
+    const col = document.querySelector(`.col[data-col=${k}]`);
+    col.querySelector('.count').textContent = list.length;
+    col.querySelector('.cards').innerHTML = list.map(todoCard).join('') || '<p class="muted small">Nothing here.</p>';
+  }
+  const doneToday = cols.done.filter(i => i.doneAt && new Date(i.doneAt).toDateString() === new Date().toDateString()).length;
+  $('#todoSummary').textContent = `${cols.todo.length} to do · ${cols.doing.length} in progress · ${doneToday} done today`;
+  const box = $('#todoModal');
+  paintAvatars(box);
+  box.querySelectorAll('[data-open]').forEach(el => el.onclick = () => { box.hidden = true; if (agents.has(el.dataset.open)) select(el.dataset.open, false); });
+  box.querySelectorAll('.todo').forEach(card => {
+    const it = boardItems.find(i => i.id === card.dataset.todo);
+    card.addEventListener('dragstart', e => { e.dataTransfer.setData('text/todo', it.id); card.classList.add('dragging'); });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+    card.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+      const act = b.dataset.act;
+      if (act === 'move') boardPost({ op: 'update', id: it.id, status: b.dataset.to });
+      if (act === 'delete') boardPost({ op: 'delete', id: it.id });
+      if (act === 'give') { box.hidden = true; openHandoff(null, null, `${it.title}${it.notes ? `\n\n${it.notes}` : ''}`, it); }
+      if (act === 'hire') { box.hidden = true; openNewForTodo(it); }
+      if (act === 'edit') {
+        card.innerHTML = `<input value="${escapeHtml(it.title)}" maxlength="200"><textarea rows="3" placeholder="Notes">${escapeHtml(it.notes || '')}</textarea><div class="acts"><button class="primary" data-save>Save</button><button data-cancel>Cancel</button></div>`;
+        card.draggable = false;
+        card.querySelector('[data-save]').onclick = () => boardPost({ op: 'update', id: it.id, title: card.querySelector('input').value.trim() || it.title, notes: card.querySelector('textarea').value });
+        card.querySelector('[data-cancel]').onclick = renderTodo;
+        card.querySelector('input').focus();
+      }
+    });
+  });
+}
+document.querySelectorAll('.col').forEach(col => {
+  col.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('text/todo')) { e.preventDefault(); col.classList.add('drop'); } });
+  col.addEventListener('dragleave', () => col.classList.remove('drop'));
+  col.addEventListener('drop', e => {
+    col.classList.remove('drop');
+    const id = e.dataTransfer.getData('text/todo');
+    if (id) { e.preventDefault(); boardPost({ op: 'update', id, status: col.dataset.col }); }
+  });
+});
+async function openTodo() {
+  const projects = [...new Set(allSessions.map(s => s.project))].sort();
+  $('#todoProject').innerHTML = '<option value="">No project</option>' + projects.map(p => `<option>${escapeHtml(p)}</option>`).join('');
+  const sel = agents.get(selectedId);
+  if (sel) $('#todoProject').value = sel.session.project;
+  $('#todoModal').hidden = false;
+  await loadBoard(); renderTodo();
+  $('#todoAdd').title.focus();
+}
+$('#todoBtn').onclick = openTodo;
+$('#todoAdd').onsubmit = e => {
+  e.preventDefault();
+  const f = e.target;
+  boardPost({ op: 'add', title: f.title.value.trim(), project: f.project.value });
+  f.title.value = '';
+};
+$('#todoClear').onclick = () => {
+  const old = boardItems.filter(i => i.status === 'done' && Date.now() - (i.doneAt || 0) > 86400e3);
+  Promise.all(old.map(i => post('/api/board', { op: 'delete', id: i.id }))).then(loadBoard);
+  toast(old.length ? `Cleared ${old.length} old done card${old.length > 1 ? 's' : ''}.` : 'Nothing older than a day to clear.');
+};
+
 // ---------------- handoffs ----------------
 let dragHandoff = null;
 document.addEventListener('dragend', () => { canvas.classList.remove('drop-target'); });
@@ -585,18 +700,24 @@ canvas.addEventListener('drop', e => {
   else toast('Drop it on another agent to hand it off.');
 });
 
-function openHandoff(fromId, toId, text) {
-  const from = agents.get(fromId) || { persona: personaFor(allSessions.find(s => s.id === fromId) || { id: fromId }), session: allSessions.find(s => s.id === fromId) || {} };
+let handoffTodo = null; // board item being handed off, if any
+function openHandoff(fromId, toId, text, todo = null) {
+  handoffTodo = todo;
+  const from = !fromId ? { persona: { name: 'the office board' }, session: { project: todo?.project || '' } }
+    : agents.get(fromId) || { persona: personaFor(allSessions.find(s => s.id === fromId) || { id: fromId }), session: allSessions.find(s => s.id === fromId) || {} };
   const f = $('#handoffForm');
   const role = roleFor(from.persona.role);
   const targets = [...allSessions].filter(s => s.id !== fromId).map(s => ({ s, p: personaFor(s) }));
   $('#handoffTarget').innerHTML = targets.map(({ s, p }) => `<option value="${s.id}">${escapeHtml(p.name)} · ${escapeHtml(s.project)}${s.live ? ' (session open)' : ''}</option>`).join('');
   if (toId) f.target.value = toId;
+  else if (todo?.project) { const same = targets.find(({ s }) => s.project === todo.project && !s.live) || targets.find(({ s }) => s.project === todo.project); if (same) f.target.value = same.s.id; }
   $('#handoffFrom').textContent = `From ${from.persona.name}${role ? `, ${role.label}` : ''} (${from.session.project || ''}).`;
   const fill = () => {
     const t = allSessions.find(s => s.id === f.target.value), tp = t && personaFor(t);
     if (!t) return;
-    f.prompt.value = `Handoff from ${from.persona.name}${role ? ` (${role.label})` : ''}:\n\n${text}\n\nPlease take it from here: fix what's described above in ${t.project}, run the relevant tests, and tell me what you changed.`;
+    f.prompt.value = todo
+      ? `From the office TODO board: ${text}\n\nPlease take care of this in ${t.project}, run the relevant tests, and tell me what you changed.`
+      : `Handoff from ${from.persona.name}${role ? ` (${role.label})` : ''}:\n\n${text}\n\nPlease take it from here: fix what's described above in ${t.project}, run the relevant tests, and tell me what you changed.`;
     const canResume = !t.live;
     f.querySelector('input[value=resume]').disabled = !canResume;
     $('#handoffResumeLabel').textContent = canResume ? `Continue ${tp.name}'s session (they keep their memory)` : `Continue ${tp.name}'s session (not possible: their session is already open)`;
@@ -612,7 +733,8 @@ $('#handoffForm').onsubmit = async e => {
   const f = e.target;
   const t = allSessions.find(s => s.id === f.target.value);
   try {
-    await post('/api/handoff', { targetId: f.target.value, prompt: f.prompt.value.trim(), mode: f.mode.value });
+    await post('/api/handoff', { targetId: f.target.value, prompt: f.prompt.value.trim(), mode: f.mode.value, todoId: handoffTodo?.id });
+    handoffTodo = null; loadBoard();
     $('#handoffModal').hidden = true;
     const a = agents.get(f.target.value);
     if (a && !a.away) { a.quip = '🤝 On it!'; a.quipT = -4; a.celebrateT = 2; }
@@ -642,7 +764,7 @@ async function runStandupSummary() {
   const box = $('#standupText');
   box.classList.add('thinking');
   box.textContent = 'Everyone is heading to the meeting room… collecting yesterday, today and blockers.';
-  $('#standupTime').textContent = new Date().toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  $('#standupTime').textContent = `${new Date().toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} · hosted by ${agents.get('pm')?.persona.name || 'the PM'}`;
   const started = Date.now();
   const tick = setInterval(() => { if (box.classList.contains('thinking')) box.textContent = `Collecting notes from everyone… ${Math.round((Date.now() - started) / 1000)}s`; }, 1000);
   try {
@@ -1075,6 +1197,8 @@ canvas.addEventListener('mousemove', e => {
 canvas.addEventListener('click', e => {
   const rect = canvas.getBoundingClientRect(), sc = scale();
   const wx = (e.clientX - rect.left) / sc / T, wy = (e.clientY - rect.top) / sc / T;
+  const kb = world?.kanban;
+  if (kb && wx >= kb.x && wx <= kb.x + kb.w && wy >= kb.y && wy <= kb.y + 1) return openTodo();
   const rabbit = critters.find(c => c.kind === 'rabbit' && Math.abs(c.x + 0.5 - wx) < 0.8 && Math.abs(c.y + 0.5 - wy) < 0.8);
   if (rabbit) { critters = critters.filter(c => c !== rabbit); setMatrix(true); return; }
   const a = world && agentAt(e);
@@ -1082,6 +1206,7 @@ canvas.addEventListener('click', e => {
 });
 
 function resumeCmd(s) {
+  if (s.id === 'pm') return 'The PM lives in the office: use the Ask tab';
   const q = p => `'${String(p).replace(/'/g, `'\\''`)}'`;
   return s.cwd ? `cd ${q(s.cwd)} && claude --resume ${s.id}` : `claude --resume ${s.id}`;
 }
@@ -1132,6 +1257,8 @@ async function select(id, doCopy) {
   if (doCopy) copy(resumeCmd(a.session));
   updatePanelHeader();
   if (switching) { renderChat(); fillPersonaForm(); $('#tab-work').innerHTML = '<p class="muted">Loading…</p>'; }
+  document.body.classList.toggle('pm-selected', id === 'pm');
+  if (id === 'pm') { detail = null; renderPMWork(); return; }
   const res = await fetch(`/api/session/${id}`).catch(() => null);
   if (selectedId !== id) return;
   if (!res?.ok) { detail = null; $('#tab-work').innerHTML = '<p class="muted">This session is gone (it may have just ended). It will disappear from the office shortly.</p>'; return; }
@@ -1143,7 +1270,7 @@ function discardDraft() {
   const prev = agents.get(selectedId);
   if (prev?.draftPersona) { prev.draftPersona = null; prev.setSession(prev.session, true); }
 }
-function closePanel() { discardDraft(); selectedId = null; $('#panel').hidden = true; resize(); }
+function closePanel() { discardDraft(); document.body.classList.remove('pm-selected'); selectedId = null; $('#panel').hidden = true; resize(); }
 $('#closePanel').onclick = closePanel;
 
 
@@ -1155,6 +1282,16 @@ function updatePanelHeader() {
   const ds = displayStatus(s);
   const role = roleFor(p.role);
   const preset = PRESETS.find(x => x.key === p.preset)?.label || '✏️ Custom';
+  if (a.id === 'pm') {
+    $('#pBadges').innerHTML = '<span class="pill lv">👔 Product Manager</span><span class="pill" data-tip="You are the boss. The PM keeps track of everyone and reports to you.">works for you</span>';
+    $('#pTitle').textContent = 'Knows what every agent is doing. Ask away.';
+    $('#pDoing').textContent = a.statusText();
+    $('#pMeta').textContent = 'Desk in the meeting room · hosts the standup';
+    const av = $('#avatar').getContext('2d');
+    av.imageSmoothingEnabled = false; av.clearRect(0, 0, 64, 104);
+    av.drawImage(characterFrame(p, 'down', 'stand', 0), 0, 0, 64, 104);
+    return;
+  }
   $('#pBadges').innerHTML = [
     `<span class="chip ${ds.replace(' ', '-')}">${ds === 'offline' ? 'out of office' : ds}</span>`,
     `<span class="pill lv">Lv ${s.level || 1} · ${escapeHtml(s.rank || 'Intern')}</span>`,
@@ -1182,6 +1319,58 @@ function fmtDuration(ms) {
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 function fmtTokens(n) { return n >= 1e6 ? `${(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}M` : `${Math.round((n || 0) / 1000)}k`; }
+
+function renderPMWork() {
+  const live = allSessions.filter(s => s.live), busy = allSessions.filter(s => s.status === 'busy');
+  const needs = allSessions.filter(s => s.status === 'waiting' || isYourTurn(s));
+  const cols = ['todo', 'doing', 'done'].map(st => boardItems.filter(i => i.status === st).length);
+  $('#tab-work').innerHTML = `
+    <div class="kv">
+      <div data-tip="Sessions whose claude process is running"><b>${live.length}</b><span>in the office</span></div>
+      <div data-tip="Writing a reply or running a tool right now"><b>${busy.length}</b><span>working</span></div>
+      <div data-tip="Waiting for your permission or your reply"><b>${needs.length}</b><span>waiting on you</span></div>
+    </div>
+    <div class="kv">
+      <div data-tip="Open cards on the office board"><b>${cols[0]}</b><span>to do</span></div>
+      <div data-tip="Cards someone is working on"><b>${cols[1]}</b><span>in progress</span></div>
+      <div data-tip="Finished cards"><b>${cols[2]}</b><span>done</span></div>
+    </div>
+    <h3>What I can do for you</h3>
+    <div class="pm-actions">
+      <button id="pmPlan" class="primary" data-tip="I look at the whole office and suggest today's priorities as board cards you can add with one click.">🗓️ Plan my day</button>
+      <button id="pmAskStatus" data-tip="A quick status report on everyone.">📊 Status report</button>
+      <button id="pmAskBlocked" data-tip="Who is stuck, and what would unblock them.">🧱 What's blocked?</button>
+      <button id="pmBoard" data-tip="Open the office TODO board.">📋 Open the board</button>
+      <button id="pmSession" data-tip="Opens a real Claude session as the PM in your terminal. With the agent-office tools connected, it can read the office, update the board and hire agents.">🖥️ Start a PM session</button>
+    </div>
+    <div id="pmPlanOut"></div>
+    <p class="muted small">I don't write code myself. I read a fresh briefing of every agent (status, recent messages, reports) and the board each time you ask, so my answers are always current.</p>`;
+  const askPM = q => { document.querySelector('.tabs [data-tab=ask]').click(); ask(q); };
+  $('#pmAskStatus').onclick = () => askPM('Give me a quick status report on the whole office.');
+  $('#pmAskBlocked').onclick = () => askPM("What's blocked right now, and what would unblock it?");
+  $('#pmBoard').onclick = openTodo;
+  $('#pmSession').onclick = async () => {
+    try { await post('/api/pm/session', { persona: agents.get('pm')?.persona }); toast(`🖥️ Opening a PM session in ${escapeHtml(config.terminal)}.`); }
+    catch (e) { toast(`Could not start the PM session: ${escapeHtml(e.message)}`); }
+  };
+  $('#pmPlan').onclick = async () => {
+    const out = $('#pmPlanOut'), pm = agents.get('pm');
+    out.innerHTML = '<p class="muted small">Looking at the whole office…</p>';
+    if (pm) pm.thinking = true;
+    try {
+      const plan = await post('/api/pm/plan', { persona: pm?.persona });
+      out.innerHTML = `<div class="plan"><p>${md(plan.summary || '')}</p>${(plan.items || []).map((it, i) => `
+        <div class="plan-item"><div><b>${escapeHtml(it.title)}</b>${it.project ? ` <span class="pill">${escapeHtml(it.project)}</span>` : ''}<div class="muted small">${escapeHtml(it.why || '')}</div></div>
+        <button class="small" data-add="${i}">➕ Add to board</button></div>`).join('')}
+        ${(plan.items || []).length ? '<button class="primary small" id="planAll">Add all to the board</button>' : ''}</div>`;
+      const add = it => post('/api/board', { op: 'add', title: it.title, project: it.project || '', notes: [it.notes, it.why && `Why: ${it.why}`].filter(Boolean).join('\n') });
+      out.querySelectorAll('[data-add]').forEach(b => b.onclick = async () => { await add(plan.items[Number(b.dataset.add)]); b.disabled = true; b.textContent = '✓ Added'; loadBoard(); });
+      const all = $('#planAll');
+      if (all) all.onclick = async () => { for (const [i, it] of plan.items.entries()) { const b = out.querySelector(`[data-add="${i}"]`); if (!b.disabled) { await add(it); b.disabled = true; b.textContent = '✓ Added'; } } all.disabled = true; loadBoard(); toast('📋 Added to the board.'); };
+    } catch (e) { out.innerHTML = `<p class="muted small">⚠️ ${escapeHtml(e.message)}</p>`; }
+    if (pm) pm.thinking = false;
+  };
+}
 
 function renderWork() {
   const d = detail;
@@ -1279,7 +1468,7 @@ async function ask(question) {
   }, 1000);
   try {
     const { name, traits } = a.persona;
-    const res = await fetch(`/api/ask/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, mode, persona: { name, traits } }) });
+    const res = await fetch(id === 'pm' ? '/api/ask/pm' : `/api/ask/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, mode, persona: { name, traits } }) });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `server said ${res.status}`);
     const reader = res.body.getReader(); const dec = new TextDecoder();
     let text = '';
@@ -1353,6 +1542,7 @@ $('#personaForm').onsubmit = async e => {
   const s = sessions.find(x => x.id === id);
   const ag = agents.get(id);
   if (ag) ag.draftPersona = null;
+  if (id === 'pm') { pmPersonality = saved; ag?.setSession(pmSession(), true); }
   if (s) { s.personality = saved; ag?.setSession(s, true); }
   toast(`Saved ${escapeHtml(saved.name)}'s personality`);
 };
@@ -1445,7 +1635,8 @@ function renderOverview() {
   const avgMot = live.length ? Math.round(live.reduce((t, s) => t + motivation(s).score, 0) / live.length) : 0;
   const pane = document.querySelector('[data-bpane=overview]');
   const plain = html => html.replace(/<[^>]+>/g, '');
-  const card = (value, label, desc) => `<div class="stat-card" data-tip="${escapeHtml(plain(desc))}"><b>${value}</b><span>${label}</span><p class="desc">${desc}</p></div>`;
+  // the explanation lives in the hover tooltip, so the cards stay compact
+  const card = (value, label, desc) => `<div class="stat-card" data-tip="${escapeHtml(plain(desc))}"><b>${value}</b><span>${label} <span class="info">ⓘ</span></span></div>`;
   const section = (title, desc) => `<h3>${title}</h3><p class="section-desc">${desc}</p>`;
   pane.innerHTML = `
     <div class="kv overview-cards">
@@ -1702,7 +1893,19 @@ async function openNew() {
   if (!f.cwd.value) f.cwd.value = agents.get(selectedId)?.session.cwd || projects[0] || '';
   f.cwd.focus(); f.cwd.select();
 }
-$('#newBtn').onclick = openNew;
+$('#newBtn').onclick = () => { newTodo = null; openNew(); };
+let newTodo = null; // board item a new hire is for
+async function openNewForTodo(item) {
+  newTodo = item;
+  await openNew();
+  const f = $('#newForm');
+  const projects = [...$('#projectList').options].map(o => o.value);
+  const match = projects.find(p => p.split('/').pop() === item.project);
+  if (match) f.cwd.value = match;
+  f.role.value = 'fixer'; f.role.dispatchEvent(new Event('change'));
+  f.prompt.value = `${item.title}${item.notes ? `\n\n${item.notes}` : ''}`;
+  f.mode.value = 'background'; syncNewForm();
+}
 $('#newForm').onsubmit = async e => {
   e.preventDefault();
   const f = e.target;
@@ -1713,7 +1916,8 @@ $('#newForm').onsubmit = async e => {
   persona.workStyle = persona.impact ? workStyleFor(persona) : '';
   try {
     const background = f.mode.value === 'background';
-    await post('/api/new', { cwd: f.cwd.value.trim(), prompt: f.prompt.value.trim(), persona, role: role?.key || null, background });
+    await post('/api/new', { cwd: f.cwd.value.trim(), prompt: f.prompt.value.trim(), persona, role: role?.key || null, background, todoId: newTodo?.id });
+    newTodo = null; loadBoard();
     $('#newModal').hidden = true; f.prompt.value = ''; f.name.value = ''; f.role.value = ''; f.mode.value = 'terminal'; syncNewForm();
     toast(background
       ? `${role ? role.icon : '🏢'} ${escapeHtml(persona.name)} is on the way to their desk. You'll get a 📋 report when they're done.`
@@ -1766,7 +1970,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '-') return $('#zoomOut').click();
   if (e.key === '0') return setZoom(0);
   const actions = {
-    n: () => openNew(), d: () => openBoard(), s: () => setShowOffline(!showOffline),
+    n: () => { newTodo = null; openNew(); }, d: () => openBoard(), b: () => openTodo(), s: () => setShowOffline(!showOffline),
     m: () => (standup.on ? endStandup() : startStandup()), t: () => (replay.on ? stopReplay() : startReplay()),
     o: () => selectedId && openInTerminal(), c: () => selectedId && $('#copyCmd').click(), h: () => selectedId && hideSelected(),
     a: () => { if (selectedId) { document.querySelector('.tabs [data-tab=ask]').click(); $('#askInput').focus(); } },
@@ -1794,6 +1998,7 @@ window.office = {
 const config = await (await fetch('/api/config')).json().catch(() => ({ terminal: 'Terminal', achievements: [] }));
 BADGES = Object.fromEntries(config.achievements.map(a => [a.id, a]));
 $('#openBtn').textContent = `🖥️ Open in ${config.terminal}`;
+await loadPM();
 await refresh();
 if (!store.get('seenHelp', false)) { store.set('seenHelp', true); openHelp(); }
 setInterval(refresh, 3000);

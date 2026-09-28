@@ -20,7 +20,7 @@ export const EXEC_LEVEL = 5; // agents at this level or above get a private offi
 const OFFICES_PER_ROW = 4;
 const OFFICE_PITCH = 7;       // top wall, 4 inner rows, bottom wall with door, aisle
 
-export function buildWorld(sessions) {
+export function buildWorld(sessions, { pm = null } = {}) {
   const exec = sessions.filter(s => (s.level || 1) >= EXEC_LEVEL);
   const cube = sessions.filter(s => (s.level || 1) < EXEC_LEVEL);
   const officeRows = Math.ceil(exec.length / OFFICES_PER_ROW);
@@ -185,6 +185,21 @@ export function buildWorld(sessions) {
   }
   O('tv', 3, m0 + 2, 3, 1);
   objects.push({ type: 'whiteboard', x: 14, y: c1 + 10, w: 2, h: 1, wall: true }, { type: 'whiteboard', x: 23, y: c1 + 10, w: 2, h: 1, wall: true });
+  // the Product Manager's desk, at the head of the meeting room
+  if (pm) {
+    const index = rooms.length, px = 31, py = m0 + 2;
+    const desk = { type: 'desk', x: px, y: py + 1, w: 3, h: 1, block: true, room: index, exec: true };
+    objects.push(desk, { type: 'rug', x: px - 1, y: py, w: 5, h: 4, under: true, color: '#8e6fb8' }, { type: 'lamp', x: px + 4, y: py + 1, w: 1, h: 1, block: true }, { type: 'shelf', x: px - 2, y: py, w: 1, h: 1, block: true });
+    const seat = { id: 'desk-pm', x: px + 1, y: py, dir: 'down', pose: 'sit', zone: 'desk', owner: pm.id };
+    const visit = { id: 'visit-pm', x: px + 1, y: py + 3, dir: 'up', pose: 'stand', zone: 'visit', owner: pm.id, bubble: '👀', dur: [5, 10] };
+    spots.push(seat, visit);
+    rooms.push({ kind: 'pm', index, session: pm, x0: px, top: py, seat, visit, desk, tint: '#8e6fb8', door: { x: px + 1, y: py + 3 },
+      plaque: { x: px - 0.4, y: py + 1.45, w: 3.8 }, helperSlots: [[px, py + 3], [px + 2, py + 3], [px - 1, py + 2]] });
+  }
+
+  // the office TODO board: click it to open the board
+  const kanban = { type: 'kanban', x: 17, y: c1 + 10, w: 4, h: 1, wall: true, counts: [0, 0, 0] };
+  objects.push(kanban);
   O('plant', 1, m0 + 6); O('plant', W - 2, m0 + 6); O('plant', 1, m0 + 1); O('plant', W - 2, m0 + 1);
 
   // keep doorways clear: nothing may stand on the first two tiles inside a door
@@ -201,7 +216,7 @@ export function buildWorld(sessions) {
   const wanderPts = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (tiles[y][x].kind === 'hall' && walkable[y][x] && (x * 7 + y * 3) % 11 === 0) wanderPts.push({ x, y });
 
-  const world = { W, H, tiles, walkable, objects, spots, rooms, zones, wanderPts, yCommon, elevator, spawn, meeting };
+  const world = { W, H, tiles, walkable, objects, spots, rooms, zones, wanderPts, yCommon, elevator, spawn, meeting, kanban };
   for (const s of spots) if (!findPath(world, { x: 2, y: 1 }, s)) console.warn('unreachable spot', s.id);
   return world;
 }

@@ -8,7 +8,7 @@ import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline } from './demo.mjs';
+import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN } from './demo.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -20,6 +20,7 @@ const PERSONALITIES_FILE = path.join(ROOT, 'data', 'personalities.json');
 const HIDDEN_FILE = path.join(ROOT, 'data', 'hidden.json');
 const REPORTS_DIR = path.join(ROOT, 'data', 'reports');
 const SETTINGS_FILE = path.join(ROOT, 'data', 'settings.json');
+const BOARD_FILE = path.join(ROOT, 'data', 'board.json');
 const WORKTREES_DIR = path.join(os.homedir(), '.agent-office', 'worktrees');
 const DEFAULT_SETTINGS = { hiring: { enabled: true, minLevel: 5, maxActive: 3 } };
 // Which terminal opens sessions. macOS: iTerm or Terminal. Linux: the first one found of
@@ -289,6 +290,7 @@ function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null }) 
     run.state = ok ? 'done' : 'failed'; run.endedAt = Date.now(); run.child = null;
     await fsp.mkdir(REPORTS_DIR, { recursive: true });
     const branchNote = wt ? `\n\n---\nBranch \`${wt.branch}\` in \`${wt.worktree}\`. Review with \`git diff HEAD...${wt.branch}\` in the original repo.` : '';
+    syncBoardWithRun(id, ok ? 'done' : 'failed');
     await writeJson(path.join(REPORTS_DIR, `${id}.json`), { role, name: persona?.name, ok, result: result + branchNote, cost, startedAt: run.startedAt, endedAt: run.endedAt, hiredBy, task: prompt, branch: wt?.branch, worktree: wt?.worktree });
   };
   child.on('error', e => finish(false, `Could not start claude: ${e.message}`, 0));
@@ -300,6 +302,97 @@ function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null }) 
     else finish(false, `claude exited with code ${code}. ${(err || out).slice(0, 1000)}`, 0);
   });
   return run;
+}
+
+// ---------- the Product Manager: knows what everyone in the office is doing ----------
+async function officeBriefing() {
+  const personalities = await loadPersonalities();
+  const clip = (t, n) => { t = String(t || '').replace(/\s+/g, ' '); return t.length > n ? `${t.slice(0, n)}…` : t; };
+  const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
+  const lines = [];
+  for (const s of await listSessions()) {
+    const d = await sessionDetail(s.id);
+    if (!d) continue;
+    const name = personalities[s.id]?.name || s.id.slice(0, 8);
+    const boss = s.hiredBy ? personalities[s.hiredBy]?.name : null;
+    lines.push([
+      `- ${name} (project ${s.project}, level ${s.level || 1}${boss ? `, hired by ${boss}` : ''}): "${s.title}". Status: ${s.status}${s.activity ? `, doing: ${s.activity}` : ''}${s.waitingFor ? `, waiting for: ${s.waitingFor}` : ''}. Last active ${ago(s.updatedAt)}. Spent $${(s.cost || 0).toFixed(2)}, context ${Math.round((s.context || 0) / (s.contextWindow || 1) * 100)}% full.`,
+      d.prompts.length ? `  Last asked: ${clip(d.prompts[d.prompts.length - 1].text, 220)}` : '',
+      d.replies.length ? `  Last said: ${clip(d.replies[d.replies.length - 1].text, 320)}` : '',
+      d.report ? `  Report: ${clip(d.report.result, 320)}` : '',
+    ].filter(Boolean).join('\n'));
+  }
+  const board = (await loadBoard()).items || [];
+  const boardText = ['todo', 'doing', 'done'].map(st => {
+    const items = board.filter(i => i.status === st && (st !== 'done' || Date.now() - (i.doneAt || 0) < 3 * 86400e3));
+    return `${{ todo: 'To do', doing: 'In progress', done: 'Done (last 3 days)' }[st]}: ${items.length ? items.map(i => `[${i.id}] ${i.title}${i.project ? ` (${i.project})` : ''}`).join('; ') : 'nothing'}`;
+  }).join('\n');
+  return `Now: ${new Date().toLocaleString()}.\n\nAgents (most recent first):\n${lines.join('\n')}\n\nTODO board:\n${boardText}`;
+}
+const PM_SYSTEM = (name, traits) => `You are ${name || 'the Product Manager'}, the Product Manager of the user's "Agent Office", where every coworker is an AI coding session (Claude Code). The user is the boss; you work for them. `
+  + 'You keep track of what every agent is doing, spot blockers, duplicated work and risks, and help the user decide what to do next. You are given a fresh briefing of the whole office. '
+  + 'Be concise, concrete and organised: name agents and projects, lead with what matters, and suggest next steps. If something is not in the briefing, say you do not know rather than guessing.'
+  + (traits ? ` Personality: ${traits}.` : '');
+async function askPM(question, persona, res) {
+  const prompt = `Office briefing:\n\n${await officeBriefing()}\n\nThe boss asks: ${question}`;
+  streamClaude(['-p', prompt, '--model', process.env.PM_MODEL || 'sonnet', '--no-session-persistence', '--tools', '', '--append-system-prompt', PM_SYSTEM(persona?.name, persona?.traits), ...STREAM_ARGS], res, { cwd: os.tmpdir(), timeoutMs: 3 * 60e3, fast: true });
+}
+async function pmPlan(persona) {
+  const prompt = `Office briefing:\n\n${await officeBriefing()}\n\nPlan the boss's day. Reply with ONLY a JSON object, no code fences: {"summary": "2-3 sentences on the state of the office and the focus for today", "items": [up to 6 of {"title": "short, actionable TODO", "project": "project folder name or empty", "notes": "one or two sentences of detail", "why": "why it matters now"}]}. Prefer unblocking agents, finishing work in progress and following up on reports over starting new things. Do not repeat items already on the board.`;
+  const out = await new Promise((resolve, reject) => {
+    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, '--model', process.env.PM_MODEL || 'sonnet', '--no-session-persistence', '--tools', '', '--append-system-prompt', PM_SYSTEM(persona?.name, persona?.traits), '--output-format', 'text'], { cwd: os.tmpdir(), env: FAST_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+    let o = '', e = '';
+    child.stdout.on('data', d => { o += d; }); child.stderr.on('data', d => { e += d; });
+    child.on('error', reject);
+    child.on('close', () => (o.includes('{') ? resolve(o) : reject(new Error((e || o).slice(0, 300) || 'no answer'))));
+  });
+  return JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1));
+}
+
+// ---------- TODO board ----------
+// items: { id, title, notes, project, status: todo|doing|done, sessionId, by, createdAt, updatedAt, doneAt }
+const BOARD_STATUSES = ['todo', 'doing', 'done'];
+const loadBoard = () => readJson(BOARD_FILE, { items: [] }).catch(() => ({ items: [] }));
+function boardOp(op, body, by = 'you') {
+  return updateJson(BOARD_FILE, { items: [] }, board => {
+    board.items ||= [];
+    const now = Date.now();
+    const find = id => board.items.find(i => i.id === id);
+    const clean = v => String(v ?? '').slice(0, 4000);
+    if (op === 'add') {
+      const title = clean(body.title).trim().slice(0, 200);
+      if (!title) throw Object.assign(new Error('A TODO needs a title.'), { status: 400 });
+      const status = BOARD_STATUSES.includes(body.status) ? body.status : 'todo';
+      const item = { id: randomUUID().slice(0, 8), title, notes: clean(body.notes), project: clean(body.project).slice(0, 80), status, sessionId: body.sessionId || null, by, createdAt: now, updatedAt: now, doneAt: status === 'done' ? now : null };
+      board.items.push(item);
+      return item;
+    }
+    const item = find(body.id);
+    if (!item) throw Object.assign(new Error('No TODO with that id.'), { status: 404 });
+    if (op === 'delete') { board.items = board.items.filter(i => i !== item); return { ok: true }; }
+    // update / move
+    for (const k of ['title', 'notes', 'project']) if (body[k] !== undefined) item[k] = clean(body[k]);
+    if (body.sessionId !== undefined) item.sessionId = body.sessionId;
+    if (body.status && BOARD_STATUSES.includes(body.status) && body.status !== item.status) {
+      item.status = body.status;
+      item.doneAt = body.status === 'done' ? now : null;
+    }
+    if (body.note) item.notes = `${item.notes ? `${item.notes}\n\n` : ''}${clean(body.note)}`;
+    item.updatedAt = now;
+    return item;
+  });
+}
+// a background run linked to board items moves them along
+function syncBoardWithRun(sessionId, state) {
+  return updateJson(BOARD_FILE, { items: [] }, board => {
+    for (const item of board.items || []) {
+      if (item.sessionId !== sessionId) continue;
+      if (state === 'running' && item.status === 'todo') { item.status = 'doing'; item.updatedAt = Date.now(); }
+      if (state === 'done' && item.status !== 'done') { item.status = 'done'; item.doneAt = item.updatedAt = Date.now(); }
+      if (state === 'failed') { item.status = 'todo'; item.updatedAt = Date.now(); item.notes = `${item.notes ? `${item.notes}\n\n` : ''}⚠️ The agent working on this failed; see their report.`; }
+    }
+    return board;
+  }).catch(() => {});
 }
 
 // ---------- agents hiring agents (called by the agent-office MCP server, see mcp.mjs) ----------
@@ -322,6 +415,18 @@ async function agentApi(route, body) {
   if (!caller) throw Object.assign(new Error('Agent Office could not tell which session you are. Only sessions running on this machine can hire.'), { status: 403 });
   const me = (await listSessions()).find(s => s.id === caller);
   const myName = (await loadPersonalities())[caller]?.name || 'This agent';
+  if (route === 'overview') return { text: await officeBriefing() };
+  if (route === 'todo') {
+    const { op = 'list' } = body;
+    if (op === 'list') {
+      const board = await loadBoard();
+      const items = board.items.filter(i => body.status ? i.status === body.status : i.status !== 'done' || Date.now() - (i.doneAt || 0) < 7 * 86400e3);
+      return { items: items.map(({ id, title, status, project, notes, by }) => ({ id, title, status, project, by, notes: notes.slice(0, 300) })) };
+    }
+    if (op === 'add') return { item: await boardOp('add', { ...body, project: body.project || me?.project, sessionId: body.assign_to_me ? caller : null }, myName) };
+    if (op === 'update') return { item: await boardOp('update', { id: body.id, status: body.status, note: body.note ? `${myName}: ${body.note}` : undefined }, myName) };
+    throw Object.assign(new Error(`Unknown todo operation ${op}`), { status: 400 });
+  }
   if (route === 'hires' || route === 'report') {
     const mine = [];
     for (const [id, r] of runs) if (r.hiredBy === caller) mine.push({ id, name: r.name, role: r.role, state: r.state, branch: r.branch, task: r.task });
@@ -333,7 +438,8 @@ async function agentApi(route, body) {
   }
   // route === 'hire'
   if (!settings.hiring.enabled) throw Object.assign(new Error('Hiring is switched off in Agent Office (Dashboard → Settings).'), { status: 403 });
-  if (!me || (me.level || 1) < settings.hiring.minLevel) {
+  const isPM = (await loadPersonalities())[caller]?.role === 'pm';
+  if (!isPM && (!me || (me.level || 1) < settings.hiring.minLevel)) {
     throw Object.assign(new Error(`${myName} is level ${me?.level || 1}. Only agents at level ${settings.hiring.minLevel} or higher can hire coworkers. Keep working to level up!`), { status: 403 });
   }
   const active = [...runs.values()].filter(r => r.hiredBy === caller && r.state === 'running').length;
@@ -719,8 +825,11 @@ async function standup(names, res) {
     ].filter(Boolean).join('\n');
   });
   // exact numbers come from us, not the model
+  const board = (await loadBoard()).items || [];
+  const doneToday = board.filter(i => i.status === 'done' && i.doneAt >= from).length;
+  const boardLine = board.length ? `📋 Board: ${doneToday} done ${window}, ${board.filter(i => i.status === 'doing').length} in progress, ${board.filter(i => i.status === 'todo').length} to do.\n` : '';
   const header = `## 📅 ${window === 'today' ? `Today, ${new Date().toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}` : 'Last 24 hours'}\n` +
-    `**${worked.length} agent${worked.length > 1 ? 's' : ''} worked ${fmt(totalMs)}** across ${projects.length} project${projects.length > 1 ? 's' : ''} (${projects.join(', ')}).\n\n`;
+    `**${worked.length} agent${worked.length > 1 ? 's' : ''} worked ${fmt(totalMs)}** across ${projects.length} project${projects.length > 1 ? 's' : ''} (${projects.join(', ')}).\n${boardLine}\n`;
   // The time goes into output tokens (~75/s on Haiku), so one call writing every section takes
   // 10s+. Instead the summary streams while the per-agent blocks are written in parallel, 2 agents
   // per call, and appended when the summary is done: wall time is the slowest call, not the sum.
@@ -773,14 +882,22 @@ async function demoRoute(url, req, res) {
     return d ? json(res, 200, d) : json(res, 404, { error: 'not found' });
   }
   if (url.pathname === '/api/personalities') return json(res, 200, demoSavePersonalities(await readBody(req)));
+  if (req.method === 'GET' && (m = url.pathname.match(/^\/api\/personality\/([\w-]+)$/))) return json(res, 200, null);
   if ((m = url.pathname.match(/^\/api\/personality\/([\w-]+)$/))) return json(res, 200, demoSavePersonality(m[1], await readBody(req)));
-  if (url.pathname.startsWith('/api/ask/')) {
+  if (url.pathname.startsWith('/api/ask/') && url.pathname !== '/api/ask/pm') {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     for (const word of DEMO_REPLY.split(' ')) { res.write(`${word} `); await new Promise(r => setTimeout(r, 40)); }
     return res.end();
   }
   if (url.pathname === '/api/quirks') return json(res, 200, DEMO_QUIRKS);
   if (url.pathname === '/api/settings') return json(res, 200, DEFAULT_SETTINGS);
+  if (url.pathname === '/api/ask/pm') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    for (const word of DEMO_PM.split(' ')) { res.write(`${word} `); await new Promise(r => setTimeout(r, 20)); }
+    return res.end();
+  }
+  if (url.pathname === '/api/pm/plan') return json(res, 200, DEMO_PLAN);
+  if (url.pathname === '/api/board') return json(res, 200, req.method === 'POST' ? demoBoardOp(await readBody(req)) : { items: demoBoard() });
   if (url.pathname === '/api/mcp') return json(res, 200, { installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
   if (url.pathname === '/api/timeline') return json(res, 200, demoTimeline(Number(url.searchParams.get('hours')) || 24));
   if (url.pathname === '/api/standup') {
@@ -817,8 +934,25 @@ const server = http.createServer(async (req, res) => {
       return d ? json(res, 200, d) : json(res, 404, { error: 'not found' });
     }
     if (url.pathname === '/api/personalities' && req.method === 'POST') return json(res, 200, await savePersonalities(await readBody(req)));
+    if ((m = url.pathname.match(/^\/api\/personality\/([\w-]+)$/)) && req.method === 'GET') return json(res, 200, (await loadPersonalities())[m[1]] || null);
     if ((m = url.pathname.match(/^\/api\/personality\/([\w-]+)$/)) && req.method === 'POST') {
       return json(res, 200, await savePersonality(m[1], await readBody(req)));
+    }
+    if (url.pathname === '/api/ask/pm' && req.method === 'POST') {
+      const { question, persona } = await readBody(req);
+      return askPM(String(question || 'Give me a quick status of the office.'), persona, res);
+    }
+    if (url.pathname === '/api/pm/plan' && req.method === 'POST') {
+      try { return json(res, 200, await pmPlan((await readBody(req)).persona)); } catch (e) { return json(res, 500, { error: `The PM could not make a plan: ${e.message}` }); }
+    }
+    if (url.pathname === '/api/pm/session' && req.method === 'POST') {
+      // a real Claude session as the PM, which can use the agent-office tools to manage the office
+      const { persona } = await readBody(req);
+      const system = `${PM_SYSTEM(persona?.name, persona?.traits)} In this session you can manage the office with the agent-office tools (office_overview, todo_list, todo_add, todo_update, hire_agent, get_report) if they are connected. Start by calling office_overview.`;
+      const sid = randomUUID(), name = `${persona?.name || 'PM'} (session)`;
+      await savePersonality(sid, { ...(persona || {}), name, role: 'pm', preset: 'pm', auto: false });
+      await openTerminal(`cd ${shq(os.homedir())} && claude --session-id ${sid} -n ${shq(name)} --append-system-prompt ${shq(system)} ${shq('Give me a quick status of the office, then ask what I want to focus on.')}`);
+      return json(res, 200, { ok: true });
     }
     if ((m = url.pathname.match(/^\/api\/ask\/([\w-]+)$/)) && req.method === 'POST') {
       const d = await sessionDetail(m[1]);
@@ -827,9 +961,14 @@ const server = http.createServer(async (req, res) => {
       const { question, mode, persona } = await readBody(req);
       return askAgent(d, String(question || 'What are you working on and what do you think of it?'), mode, persona, res);
     }
-    if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/agent\/(hire|hires|report)$/))) {
+    if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/agent\/(hire|hires|report|todo|overview)$/))) {
       try { return json(res, 200, await agentApi(m[1], await readBody(req))); }
       catch (e) { return json(res, e.status || 500, { error: e.message }); }
+    }
+    if (url.pathname === '/api/board') {
+      if (req.method !== 'POST') return json(res, 200, await loadBoard());
+      const b = await readBody(req);
+      try { return json(res, 200, await boardOp(b.op, b)); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
     }
     if (url.pathname === '/api/settings') {
       if (req.method === 'POST') { const b = await readBody(req); return json(res, 200, await updateJson(SETTINGS_FILE, {}, s => { if (b.hiring) s.hiring = { ...(s.hiring || {}), ...b.hiring }; return s; }).then(loadSettings)); }
@@ -841,7 +980,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/handoff') {
       // hand a report or reply to another agent: continue their session, or start a new one in their project
-      const { targetId, prompt, mode } = await readBody(req);
+      const { targetId, prompt, mode, todoId } = await readBody(req);
+      const linkTodo = sid => (todoId ? boardOp('update', { id: todoId, sessionId: sid, status: 'doing' }).catch(() => {}) : null);
       const d = await sessionDetail(targetId);
       if (!d) return json(res, 404, { error: 'That agent no longer exists.' });
       if (!prompt) return json(res, 400, { error: 'The handoff needs a task.' });
@@ -850,12 +990,14 @@ const server = http.createServer(async (req, res) => {
       if (mode === 'resume') {
         if (d.status !== 'offline') return json(res, 409, { error: `${p.name || 'They'} already have a session open. Choose "new session", or paste the task into their terminal.` });
         await openTerminal(`cd ${shq(d.cwd || os.homedir())} && claude --resume ${d.id}${ws} ${shq(prompt)}`);
+        await linkTodo(d.id);
         return json(res, 200, { id: d.id });
       }
       const id = randomUUID();
       const persona = { ...p, name: p.name ? `${p.name} II` : undefined, auto: false, pack: undefined, before: undefined };
       await savePersonality(id, persona);
       await openTerminal(`cd ${shq(d.cwd || os.homedir())} && claude --session-id ${id}${persona.name ? ` -n ${shq(persona.name)}` : ''}${ws} ${shq(prompt)}`);
+      await linkTodo(id);
       return json(res, 200, { id });
     }
     if (req.method === 'POST' && url.pathname === '/api/standup') return standup((await readBody(req)).names, res);
@@ -882,18 +1024,20 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/projects') return json(res, 200, await knownProjects());
     if (url.pathname === '/api/config') return json(res, 200, { terminal: TERMINAL, maxDays: MAX_DAYS, maxRooms: MAX_ROOMS, achievements: ACHIEVEMENTS.map(({ test, ...a }) => a), ranks: RANKS });
     if (req.method === 'POST' && url.pathname === '/api/new') {
-      const { cwd, prompt, persona, role, background } = await readBody(req);
+      const { cwd, prompt, persona, role, background, todoId } = await readBody(req);
       if (!cwd || !fs.existsSync(cwd)) return json(res, 400, { error: 'project folder not found' });
       const id = randomUUID();
       if (persona) await savePersonality(id, { ...persona, role: role || null });
       if (background) {
         if (!prompt) return json(res, 400, { error: 'a background agent needs a task' });
         startBackgroundRun({ id, cwd, prompt, persona, role });
+        if (todoId) await boardOp('update', { id: todoId, sessionId: id, status: 'doing' }).catch(() => {});
         return json(res, 200, { id, background: true });
       }
       const name = persona?.name ? ` -n ${shq(persona.name)}` : '';
       const style = persona?.workStyle ? ` --append-system-prompt ${shq(persona.workStyle)}` : '';
       await openTerminal(`cd ${shq(cwd)} && claude --session-id ${id}${name}${style}${prompt ? ` ${shq(prompt)}` : ''}`);
+      if (todoId) await boardOp('update', { id: todoId, sessionId: id, status: 'doing' }).catch(() => {});
       return json(res, 200, { id });
     }
     if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/open\/([\w-]+)$/))) {
