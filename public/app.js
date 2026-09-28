@@ -1415,30 +1415,32 @@ function renderOverview() {
   const needs = list.filter(s => s.status === 'waiting' || isYourTurn(s));
   const avgMot = live.length ? Math.round(live.reduce((t, s) => t + motivation(s).score, 0) / live.length) : 0;
   const pane = document.querySelector('[data-bpane=overview]');
+  const card = (value, label, desc) => `<div class="stat-card"><b>${value}</b><span>${label}</span><p class="desc">${desc}</p></div>`;
+  const section = (title, desc) => `<h3>${title}</h3><p class="section-desc">${desc}</p>`;
   pane.innerHTML = `
-    <div class="kv">
-      <div><b>${list.length}</b><span>employees (${live.length} in office)</span></div>
-      <div><b>${busy.length}</b><span>working right now</span></div>
-      <div><b>${money(sum('cost'))}</b><span>total spend</span></div>
-      <div><b>${money(workH ? sum('cost') / workH : 0)}</b><span>per hour of work</span></div>
-      <div><b>${fmtDuration(sum('workMs'))}</b><span>hands-on work</span></div>
-      <div><b>+${sum('linesAdded').toLocaleString()} / −${sum('linesRemoved').toLocaleString()}</b><span>lines changed</span></div>
-      <div><b>${sum('prs')}</b><span>PRs opened</span></div>
-      <div><b>${avgMot}%</b><span>office motivation</span></div>
+    <div class="kv overview-cards">
+      ${card(list.length, `employees (${live.length} in office)`, `Every Claude Code session from the last ${config.maxDays} days (up to ${config.maxRooms}), plus any that are running now. <i>In office</i> means its <code>claude</code> process is running.`)}
+      ${card(busy.length, 'working right now', 'Sessions where Claude is writing a reply or running a tool at this moment.')}
+      ${card(money(sum('cost')), 'total spend', 'What these sessions cost, as recorded by Claude Code (the same numbers <code>/cost</code> shows). Sessions with no recorded cost count as $0.')}
+      ${card(money(workH ? sum('cost') / workH : 0), 'per hour of work', 'Total spend divided by hands-on work time: roughly what one hour of an agent actually working costs.')}
+      ${card(fmtDuration(sum('workMs')), 'hands-on work', 'Time Claude spent on your prompts, from each prompt to its last message in that turn (at most 2h per turn). Idle time does not count.')}
+      ${card(`+${sum('linesAdded').toLocaleString()} / −${sum('linesRemoved').toLocaleString()}`, 'lines changed', 'Lines added and removed by Claude\'s file edits, as recorded by Claude Code.')}
+      ${card(sum('prs'), 'PRs opened', 'Pull / merge requests Claude Code linked to these sessions, for example when an agent created one. It counts links, not whether they are still open.')}
+      ${card(`${avgMot}%`, 'office motivation', 'Average mood of the agents in the office, just for fun: working 🔥 scores high, waiting on you 🙋 or bored 😴 lower, a nearly full context 🥵 lowest. A low score usually means agents are waiting for you.')}
     </div>
     <div class="two">
       <div>
-        <h3>Spend by project</h3>
+        ${section('Spend by project', 'Recorded cost per project folder, highest first.')}
         ${projects.map(p => `<div class="hbar"><span title="${escapeHtml(p.project)}">${escapeHtml(p.project)}</span><div class="bar"><div style="width:${p.cost / maxCost * 100}%;background:${projectColor(p.project)}"></div></div><span>${money(p.cost)}</span></div>`).join('')}
-        <h3>Work time by project</h3>
+        ${section('Work time by project', 'Hands-on work time per project folder.')}
         ${projects.map(p => `<div class="hbar"><span>${escapeHtml(p.project)}</span><div class="bar"><div style="width:${p.workMs / maxWork * 100}%;background:${projectColor(p.project)}"></div></div><span>${fmtDuration(p.workMs)}</span></div>`).join('')}
       </div>
       <div>
-        <h3>Working right now</h3>
+        ${section('Working right now', 'Agents that are busy at this moment and what they are doing. Click one to open their panel.')}
         <div class="feed">${busy.map(s => `<div data-id="${s.id}">${avatarCell(s)}<b>${escapeHtml(personaFor(s).name)}</b><span class="what">${escapeHtml(s.activity || s.title)}</span></div>`).join('') || '<p class="muted small">Nobody is working. Time to hand out tasks?</p>'}</div>
-        <h3>Needs you</h3>
+        ${section('Needs you', 'Agents blocked on a permission ❗ or waiting for your reply 💬. Click one to jump to them.')}
         <div class="feed">${needs.map(s => `<div data-id="${s.id}">${avatarCell(s)}<b>${escapeHtml(personaFor(s).name)}</b><span class="what">${s.status === 'waiting' ? `❗ ${escapeHtml(s.waitingFor || 'waiting for input')}` : '💬 your turn'} · ${escapeHtml(s.title)}</span></div>`).join('') || '<p class="muted small">Nobody is waiting on you. 🎉</p>'}</div>
-        <h3>Helpers on the floor</h3>
+        ${section('Helpers on the floor', 'Subagents running for an agent right now, shown as 🤖 robots at their desk.')}
         <p class="muted small">${helpers.size ? `${helpers.size} 🤖 helper${helpers.size > 1 ? 's' : ''} working for ${new Set([...helpers.values()].map(h => h.parent.persona.name)).size} agent(s)` : 'No helpers right now.'}</p>
       </div>
     </div>`;
