@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline } from './demo.mjs';
@@ -19,6 +19,9 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const PERSONALITIES_FILE = path.join(ROOT, 'data', 'personalities.json');
 const HIDDEN_FILE = path.join(ROOT, 'data', 'hidden.json');
 const REPORTS_DIR = path.join(ROOT, 'data', 'reports');
+const SETTINGS_FILE = path.join(ROOT, 'data', 'settings.json');
+const WORKTREES_DIR = path.join(os.homedir(), '.agent-office', 'worktrees');
+const DEFAULT_SETTINGS = { hiring: { enabled: true, minLevel: 5, maxActive: 3 } };
 // Which terminal opens sessions. macOS: iTerm or Terminal. Linux: the first one found of
 // gnome-terminal, kitty, konsole, alacritty, wezterm, xfce4-terminal, xterm. OFFICE_TERMINAL overrides.
 const LINUX_TERMINALS = ['gnome-terminal', 'kitty', 'konsole', 'alacritty', 'wezterm', 'xfce4-terminal', 'xterm'];
@@ -233,7 +236,11 @@ async function activeHelpers(s) {
 const READ_ONLY = ['Read', 'Grep', 'Glob', 'Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git show:*)', 'Bash(git status:*)', 'Bash(git branch:*)', 'Bash(git fetch:*)', 'Bash(git blame:*)', 'Bash(ls:*)'];
 const PR_TOOLS = ['Bash(gh pr list:*)', 'Bash(gh pr view:*)', 'Bash(gh pr diff:*)', 'Bash(gh pr checks:*)', 'Bash(glab mr list:*)', 'Bash(glab mr view:*)', 'Bash(glab mr diff:*)'];
 const TEST_TOOLS = ['Bash(npm test:*)', 'Bash(npm run test:*)', 'Bash(npx vitest:*)', 'Bash(npx jest:*)', 'Bash(yarn test:*)', 'Bash(pnpm test:*)', 'Bash(pytest:*)', 'Bash(python -m pytest:*)', 'Bash(go test:*)', 'Bash(cargo test:*)', 'Bash(make test:*)', 'Bash(bundle exec rspec:*)', 'Bash(./manage.py test:*)', 'Bash(python manage.py test:*)'];
+// Fixers work on their own branch in a separate git worktree: they may edit, test and commit there, never push.
+const CHECK_TOOLS = ['Bash(node --check:*)', 'Bash(npm run lint:*)', 'Bash(npm run typecheck:*)', 'Bash(npx tsc --noEmit:*)', 'Bash(npx eslint:*)', 'Bash(ruff check:*)', 'Bash(python -m py_compile:*)', 'Bash(go vet:*)', 'Bash(cargo check:*)'];
+const FIXER_TOOLS = ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash(ls:*)', 'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git add:*)', 'Bash(git commit:*)', ...TEST_TOOLS, ...CHECK_TOOLS];
 const ROLE_TOOLS = {
+  fixer: FIXER_TOOLS,
   reviewer: [...READ_ONLY, ...PR_TOOLS],
   qa: [...READ_ONLY, ...TEST_TOOLS],
   bughunter: [...READ_ONLY, ...TEST_TOOLS],
@@ -242,19 +249,38 @@ const ROLE_TOOLS = {
   custom: [...READ_ONLY],
 };
 const BACKGROUND_NOTE = 'You are running unattended inside "Agent Office": nobody can answer questions or approve extra permissions, and you only have read-only tools (plus test runners for QA roles). Do not try to edit files. When you are done, reply with a concise markdown report: a one-line summary, then findings ranked by severity with file:line references, then recommended next steps.';
-const runs = new Map(); // session id -> { child, cwd, role, name, startedAt, endedAt, state }
+const FIXER_NOTE = branch => `You are running unattended inside "Agent Office": nobody can answer questions or approve extra permissions. You work in a separate git worktree on branch "${branch}", so edit freely: nobody else's working copy is affected. Make the change, run the relevant tests, and commit your work on this branch with a clear message. Never push. When you are done, reply with a concise markdown report: what you changed (with file paths), test results, anything left to do, and the branch name.`;
+const runs = new Map(); // session id -> { child, cwd, role, name, startedAt, endedAt, state, hiredBy, task, branch, worktree }
+
+// A fresh worktree + branch for a fixer, so they never touch anyone's working copy.
+function createWorktree(cwd, name, id) {
+  let root;
+  try { root = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim(); }
+  catch { throw new Error(`${cwd} is not a git repository, so a fixer can't get its own branch there. Use a read-only role, or ask the user.`); }
+  const slug = String(name || 'agent').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'agent';
+  const branch = `office/${slug}-${id.slice(0, 6)}`;
+  const worktree = path.join(WORKTREES_DIR, path.basename(root), `${slug}-${id.slice(0, 6)}`);
+  fs.mkdirSync(path.dirname(worktree), { recursive: true });
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-b', branch, worktree, 'HEAD'], { stdio: 'ignore' });
+  // run in the same sub-folder the caller was in
+  const rel = path.relative(root, cwd);
+  return { branch, worktree, cwd: rel && !rel.startsWith('..') ? path.join(worktree, rel) : worktree };
+}
 
 async function loadReport(id) {
   try { return JSON.parse(await fsp.readFile(path.join(REPORTS_DIR, `${id}.json`), 'utf8')); } catch { return null; }
 }
 
-function startBackgroundRun({ id, cwd, prompt, persona, role }) {
+function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null }) {
   const tools = ROLE_TOOLS[role] || ROLE_TOOLS.custom;
-  const system = [persona?.workStyle, BACKGROUND_NOTE].filter(Boolean).join('\n\n');
-  const args = ['-p', prompt, '--allowedTools', ...tools, '--output-format', 'json', '--session-id', id, '--append-system-prompt', system];
+  let wt = null;
+  if (role === 'fixer') { wt = createWorktree(cwd, persona?.name, id); cwd = wt.cwd; }
+  const system = [persona?.workStyle, wt ? FIXER_NOTE(wt.branch) : BACKGROUND_NOTE].filter(Boolean).join('\n\n');
+  // --strict-mcp-config with no config = no MCP servers: faster start, and hires can't hire others
+  const args = ['-p', prompt, '--allowedTools', ...tools, '--output-format', 'json', '--strict-mcp-config', '--session-id', id, '--append-system-prompt', system];
   if (persona?.name) args.push('-n', persona.name);
   const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
-  const run = { child, cwd, role, name: persona?.name, startedAt: Date.now(), state: 'running' };
+  const run = { child, cwd, role, name: persona?.name, startedAt: Date.now(), state: 'running', hiredBy, task: prompt, branch: wt?.branch, worktree: wt?.worktree };
   runs.set(id, run);
   let out = '', err = '';
   child.stdout.on('data', d => { out += d; });
@@ -262,15 +288,85 @@ function startBackgroundRun({ id, cwd, prompt, persona, role }) {
   const finish = async (ok, result, cost) => {
     run.state = ok ? 'done' : 'failed'; run.endedAt = Date.now(); run.child = null;
     await fsp.mkdir(REPORTS_DIR, { recursive: true });
-    await writeJson(path.join(REPORTS_DIR, `${id}.json`), { role, name: persona?.name, ok, result, cost, startedAt: run.startedAt, endedAt: run.endedAt });
+    const branchNote = wt ? `\n\n---\nBranch \`${wt.branch}\` in \`${wt.worktree}\`. Review with \`git diff HEAD...${wt.branch}\` in the original repo.` : '';
+    await writeJson(path.join(REPORTS_DIR, `${id}.json`), { role, name: persona?.name, ok, result: result + branchNote, cost, startedAt: run.startedAt, endedAt: run.endedAt, hiredBy, task: prompt, branch: wt?.branch, worktree: wt?.worktree });
   };
   child.on('error', e => finish(false, `Could not start claude: ${e.message}`, 0));
   child.on('close', code => {
+    if (run.state !== 'running') return;
     let data = null;
     try { data = JSON.parse(out); } catch {}
     if (data) finish(!data.is_error, data.result || '(no report)', data.total_cost_usd || 0);
     else finish(false, `claude exited with code ${code}. ${(err || out).slice(0, 1000)}`, 0);
   });
+  return run;
+}
+
+// ---------- agents hiring agents (called by the agent-office MCP server, see mcp.mjs) ----------
+const loadSettings = async () => {
+  const s = await readJson(SETTINGS_FILE, {}).catch(() => ({}));
+  return { ...DEFAULT_SETTINGS, ...s, hiring: { ...DEFAULT_SETTINGS.hiring, ...(s.hiring || {}) } };
+};
+// Which session is calling? The MCP server sends its ancestor pids; one of them is a claude process.
+async function callerSession(pids = []) {
+  const ids = new Set(pids.map(Number));
+  for (const [id, l] of await liveSessions()) if (ids.has(l.pid)) return id;
+  for (const [id, r] of runs) if (r.child && ids.has(r.child.pid)) return id;
+  return null;
+}
+const HIRE_NAMES = ['Nova', 'Pixel', 'Byte', 'Echo', 'Juno', 'Orion', 'Kai', 'Zoe', 'Remy', 'Ivy', 'Milo', 'Luna', 'Otto', 'Sage', 'Theo', 'Wren'];
+const ROLE_PRESET = { fixer: 'intern', reviewer: 'detective', qa: 'perfectionist', bughunter: 'detective', security: 'smith', docs: 'bard' };
+async function agentApi(route, body) {
+  const settings = await loadSettings();
+  const caller = await callerSession(body.pids);
+  if (!caller) throw Object.assign(new Error('Agent Office could not tell which session you are. Only sessions running on this machine can hire.'), { status: 403 });
+  const me = (await listSessions()).find(s => s.id === caller);
+  const myName = (await loadPersonalities())[caller]?.name || 'This agent';
+  if (route === 'hires' || route === 'report') {
+    const mine = [];
+    for (const [id, r] of runs) if (r.hiredBy === caller) mine.push({ id, name: r.name, role: r.role, state: r.state, branch: r.branch, task: r.task });
+    if (route === 'hires') return { hires: mine };
+    const hire = mine.find(h => h.id === body.id);
+    if (!hire) throw Object.assign(new Error('No hire of yours with that id.'), { status: 404 });
+    const rep = await loadReport(hire.id);
+    return { ...hire, report: rep?.result || null };
+  }
+  // route === 'hire'
+  if (!settings.hiring.enabled) throw Object.assign(new Error('Hiring is switched off in Agent Office (Dashboard → Settings).'), { status: 403 });
+  if (!me || (me.level || 1) < settings.hiring.minLevel) {
+    throw Object.assign(new Error(`${myName} is level ${me?.level || 1}. Only agents at level ${settings.hiring.minLevel} or higher can hire coworkers. Keep working to level up!`), { status: 403 });
+  }
+  const active = [...runs.values()].filter(r => r.hiredBy === caller && r.state === 'running').length;
+  if (active >= settings.hiring.maxActive) throw Object.assign(new Error(`You already have ${active} hires working (the limit is ${settings.hiring.maxActive}). Wait for one to finish.`), { status: 429 });
+  const task = String(body.task || '').trim();
+  if (!task) throw Object.assign(new Error('A hire needs a task.'), { status: 400 });
+  const role = ROLE_TOOLS[body.role] ? body.role : 'fixer';
+  const cwd = body.project_path || me.cwd;
+  if (!cwd || !fs.existsSync(cwd)) throw Object.assign(new Error(`Project folder not found: ${cwd}`), { status: 400 });
+  const personalities = await loadPersonalities();
+  const used = new Set(Object.values(personalities).map(p => p.name));
+  const name = String(body.name || '').trim().slice(0, 24) || HIRE_NAMES.find(n => !used.has(n)) || `Hire ${runs.size + 1}`;
+  const id = randomUUID();
+  const persona = { name, preset: ROLE_PRESET[role], role, hangout: 'kitchen', impact: true, hiredBy: caller, hiredByName: myName };
+  persona.workStyle = `You are "${name}", hired by ${myName} in the user's AI office.`;
+  await savePersonality(id, persona);
+  const run = startBackgroundRun({ id, cwd, prompt: `Task from ${myName} (a senior coworker):\n\n${task}`, persona, role, hiredBy: caller });
+  return { id, name, role, branch: run.branch, worktree: run.worktree };
+}
+
+// ---------- registering the MCP server with Claude Code ----------
+function claudeCli(args) {
+  return new Promise(resolve => execFile(process.env.CLAUDE_BIN || 'claude', args, { timeout: 30e3 }, (err, stdout, stderr) => resolve({ ok: !err, out: `${stdout}${stderr}` })));
+}
+const MCP_NAME = 'agent-office';
+async function mcpStatus() {
+  const r = await claudeCli(['mcp', 'get', MCP_NAME]);
+  return { installed: r.ok, command: `claude mcp add --scope user ${MCP_NAME} -e OFFICE_URL=http://127.0.0.1:${PORT} -- ${process.execPath} ${path.join(ROOT, 'mcp.mjs')}` };
+}
+async function mcpInstall(install) {
+  if (!install) return claudeCli(['mcp', 'remove', MCP_NAME, '--scope', 'user']);
+  await claudeCli(['mcp', 'remove', MCP_NAME, '--scope', 'user']);
+  return claudeCli(['mcp', 'add', '--scope', 'user', MCP_NAME, '-e', `OFFICE_URL=http://127.0.0.1:${PORT}`, '--', process.execPath, path.join(ROOT, 'mcp.mjs')]);
 }
 
 // background runs look like live sessions: busy while running, then "your turn" for a while with a report
@@ -337,6 +433,7 @@ async function listSessions() {
       status: l ? l.status : 'offline', statusSince: l?.since, waitingFor: l?.waitingFor, live: !!l,
       activity: l?.status === 'busy' ? s.lastActivity?.label : null,
       cost: s.cost || (runs.get(id)?.state !== 'running' && reports.get(id)?.cost) || 0, prs: s.prs?.length || 0, personality: personalities[id] || null,
+      hiredBy: runs.get(id)?.hiredBy || personalities[id]?.hiredBy || null,
       background: runs.has(id), runState: runs.get(id)?.state || null, hasReport: reports.has(id),
       linesAdded: s.linesAdded || 0, linesRemoved: s.linesRemoved || 0, toolCount: s.toolCount || 0, gitBranch: s.gitBranch,
     });
@@ -523,7 +620,7 @@ function askAgent(detail, question, mode, persona, res) {
   const stream = ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
   const args = deep
     ? ['-p', prompt, '--resume', detail.id, '--fork-session', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream]
-    : ['-p', prompt, '--model', process.env.ASK_MODEL || 'haiku', '--effort', 'low', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream];
+    : ['-p', prompt, '--model', process.env.ASK_MODEL || 'haiku', '--effort', 'low', ...ISOLATED_ARGS, '--append-system-prompt', system, ...stream];
   streamClaude(args, res, {
     cwd: deep ? detail.cwd || os.homedir() : os.tmpdir(),
     timeoutMs: (deep ? 5 : 2) * 60e3,
@@ -537,8 +634,24 @@ function askAgent(detail, question, mode, persona, res) {
 // Quick jobs (summaries, briefings) skip extended thinking: it only adds latency here
 // (first words in ~1s instead of 20-45s).
 const FAST_ENV = { ...process.env, MAX_THINKING_TOKENS: '0' };
+// Helper calls need none of the user's MCP servers (claude.ai connectors, plugins) or hooks:
+// skipping them saves startup work and keeps status hooks from firing for background jobs.
+const ISOLATED_ARGS = ['--no-session-persistence', '--tools', '', '--strict-mcp-config', '--settings', '{"disableAllHooks":true}'];
 
-function streamClaude(args, res, { cwd, timeoutMs, timeoutNote = '', prefix = '', fast = false }) {
+// One quick call, whole answer as text ('' if it fails or times out).
+function claudeText(args, timeoutMs) {
+  return new Promise(resolve => {
+    const child = spawn(process.env.CLAUDE_BIN || 'claude', [...args, '--output-format', 'text'], { cwd: os.tmpdir(), env: FAST_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.stdout.on('data', d => { out += d; });
+    child.on('error', () => { clearTimeout(timer); resolve(''); });
+    child.on('close', code => { clearTimeout(timer); resolve(code ? '' : out.trim()); });
+  });
+}
+
+// suffix: a promise of text written after the streamed answer, before the response ends
+function streamClaude(args, res, { cwd, timeoutMs, timeoutNote = '', prefix = '', suffix = null, fast = false }) {
   const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd, env: fast ? FAST_ENV : process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' });
   if (prefix) res.write(prefix);
@@ -559,7 +672,13 @@ function streamClaude(args, res, { cwd, timeoutMs, timeoutNote = '', prefix = ''
   });
   child.stderr.on('data', d => { err += d; });
   child.on('error', e => { clearTimeout(timer); res.end(`⚠️ Could not start claude: ${e.message}`); });
-  child.on('close', code => { clearTimeout(timer); if (!res.writableEnded) res.end(code && !wrote ? `⚠️ claude exited with code ${code}. ${err.slice(0, 500)}` : ''); });
+  child.on('close', async code => {
+    clearTimeout(timer);
+    if (res.writableEnded) return;
+    if (code && !wrote) return res.end(`⚠️ claude exited with code ${code}. ${err.slice(0, 500)}`);
+    const tail = suffix ? await suffix : '';
+    if (!res.writableEnded) res.end(tail);
+  });
   res.on('close', () => { clearTimeout(timer); if (child.exitCode === null) child.kill(); });
 }
 
@@ -602,13 +721,24 @@ async function standup(names, res) {
   // exact numbers come from us, not the model
   const header = `## 📅 ${window === 'today' ? `Today, ${new Date().toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}` : 'Last 24 hours'}\n` +
     `**${worked.length} agent${worked.length > 1 ? 's' : ''} worked ${fmt(totalMs)}** across ${projects.length} project${projects.length > 1 ? 's' : ''} (${projects.join(', ')}).\n\n`;
-  const prompt = `You are running the daily standup of an office where every coworker is an AI coding session. These coworkers worked ${window}:\n\n${briefs.join('\n\n')}\n\n` +
-    'Write the rest of the standup in markdown, in exactly this order:\n' +
+  // The time goes into output tokens (~75/s on Haiku), so one call writing every section takes
+  // 10s+. Instead the summary streams while the per-agent blocks are written in parallel, 2 agents
+  // per call, and appended when the summary is done: wall time is the slowest call, not the sum.
+  const model = ['--model', process.env.STANDUP_MODEL || process.env.ASK_MODEL || 'haiku', '--effort', 'low', ...ISOLATED_ARGS];
+  const intro = `You are running the daily standup of an office where every coworker is an AI coding session. These coworkers worked ${window}:\n\n`;
+  const rules = 'Be concrete, one line each, no filler. Do not invent work that is not in the notes.';
+  const chunks = [];
+  for (let i = 0; i < briefs.length; i += 2) chunks.push(briefs.slice(i, i + 2));
+  const whoDidWhat = Promise.all(chunks.map(c => claudeText(['-p', `${intro}${c.join('\n\n')}\n\n` +
+    'For each coworker, in the order given, write one short markdown block: **Name** (project), then "Yesterday:", "Today:" and "Blockers:" lines ' +
+    '(write "none" if there are none; things waiting for the user, failing tests or open questions count as blockers). Output only the blocks, no heading. ' + rules, ...model], 2 * 60e3)))
+    .then(parts => `\n\n## Who did what\n\n${parts.map((p, i) => p || chunks[i].map(b => `${b.split('\n')[0].replace(/^### /, '**').replace(' (project:', '** (')}\nCould not get notes.`).join('\n\n')).join('\n\n')}`);
+  const prompt = `${intro}${briefs.join('\n\n')}\n\n` +
+    'Write the start of the standup in markdown, in exactly this order:\n' +
     '1. "## Summary of the day": 2 to 4 sentences on what happened overall: the main things that got done or moved forward, recurring themes across projects, and the overall state. No per-agent lists here.\n' +
     '2. "## Needs your attention": the most important blockers across the office (at most 5 bullets), or "Nothing, great work."\n' +
-    '3. "## Who did what": for each coworker, one short block: **Name** (project), then "Yesterday:", "Today:" and "Blockers:" lines (write "none" if there are none; things waiting for the user, failing tests or open questions count as blockers).\n' +
-    'Be concrete, one line each, no filler. Do not repeat the date or totals heading. Do not invent work that is not in the notes.';
-  streamClaude(['-p', prompt, '--model', process.env.STANDUP_MODEL || process.env.ASK_MODEL || 'haiku', '--effort', 'low', '--no-session-persistence', '--tools', '', ...STREAM_ARGS], res, { cwd: os.tmpdir(), timeoutMs: 3 * 60e3, prefix: header, fast: true });
+    `Stop after these two sections: the per-agent notes are written separately. Do not repeat the date or totals heading. ${rules}`;
+  streamClaude(['-p', prompt, ...model, ...STREAM_ARGS], res, { cwd: os.tmpdir(), timeoutMs: 3 * 60e3, prefix: header, suffix: whoDidWhat, fast: true });
 }
 
 // ---------- personality quirks (generated by Claude from the traits) ----------
@@ -621,7 +751,7 @@ Reply with ONLY a JSON object, no prose, no code fences:
  "verbs": {"Editing": "...", "Reading": "...", "Searching": "...", "Running": "..."} (in-character replacements for these activity verbs, one or two words each),
  "emoji": "one emoji that represents them"}`;
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, '--model', 'haiku', '--no-session-persistence', '--tools', '', '--output-format', 'text'], { cwd: os.tmpdir(), env: FAST_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, '--model', 'haiku', ...ISOLATED_ARGS, '--output-format', 'text'], { cwd: os.tmpdir(), env: FAST_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { err += d; });
@@ -650,6 +780,8 @@ async function demoRoute(url, req, res) {
     return res.end();
   }
   if (url.pathname === '/api/quirks') return json(res, 200, DEMO_QUIRKS);
+  if (url.pathname === '/api/settings') return json(res, 200, DEFAULT_SETTINGS);
+  if (url.pathname === '/api/mcp') return json(res, 200, { installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
   if (url.pathname === '/api/timeline') return json(res, 200, demoTimeline(Number(url.searchParams.get('hours')) || 24));
   if (url.pathname === '/api/standup') {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -694,6 +826,18 @@ const server = http.createServer(async (req, res) => {
       if (d.empty) return json(res, 409, { error: "They haven't started talking yet. Ask again after their first reply." });
       const { question, mode, persona } = await readBody(req);
       return askAgent(d, String(question || 'What are you working on and what do you think of it?'), mode, persona, res);
+    }
+    if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/agent\/(hire|hires|report)$/))) {
+      try { return json(res, 200, await agentApi(m[1], await readBody(req))); }
+      catch (e) { return json(res, e.status || 500, { error: e.message }); }
+    }
+    if (url.pathname === '/api/settings') {
+      if (req.method === 'POST') { const b = await readBody(req); return json(res, 200, await updateJson(SETTINGS_FILE, {}, s => { if (b.hiring) s.hiring = { ...(s.hiring || {}), ...b.hiring }; return s; }).then(loadSettings)); }
+      return json(res, 200, await loadSettings());
+    }
+    if (url.pathname === '/api/mcp') {
+      if (req.method === 'POST') { const r = await mcpInstall((await readBody(req)).install !== false); return json(res, r.ok ? 200 : 500, { ...(await mcpStatus()), output: r.out.slice(0, 500) }); }
+      return json(res, 200, await mcpStatus());
     }
     if (req.method === 'POST' && url.pathname === '/api/handoff') {
       // hand a report or reply to another agent: continue their session, or start a new one in their project

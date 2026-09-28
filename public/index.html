@@ -175,6 +175,15 @@
           <label class="toggle"><input type="checkbox" id="setCritters"> Office critters (white rabbit, black cat)</label>
           <label>"Your turn" lasts <select id="setYourTurn"><option value="1">1 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="20">20 min</option><option value="60">1 hour</option></select> before an idle agent takes a break</label>
           <div class="pack">
+            <b>👥 Senior agents can hire helpers</b>
+            <p class="muted small">Agents at a high enough level can hire coworkers themselves, through the <code>agent-office</code> tools in Claude Code. A 🔧 Fixer works on its own git branch in a separate worktree (edit, test, commit, never push). Other roles are read-only and hand in a report.</p>
+            <label class="toggle"><input type="checkbox" id="hireOn"> Allow hiring</label>
+            <label>Minimum level <select id="hireLevel"><option>3</option><option>5</option><option>7</option><option>10</option></select> · at most <select id="hireMax"><option>1</option><option>2</option><option>3</option><option>5</option></select> active hires per agent</label>
+            <div class="row"><button id="mcpInstall" class="primary">🔌 Connect to Claude Code</button><span id="mcpStatus" class="muted small"></span></div>
+            <p class="muted small">This adds the <code>agent-office</code> MCP server to your Claude Code user settings. Sessions started afterwards get the <i>hire_agent</i>, <i>list_my_hires</i> and <i>get_report</i> tools.</p>
+            <details class="muted small"><summary>Do it by hand</summary><code id="mcpCmd"></code></details>
+          </div>
+          <div class="pack">
             <b>🎭 Personality packs</b>
             <p class="muted small">Cast the whole office at once. The agent with the most XP becomes the boss (Michael gets the corner office), then Dwight, Jim, Pam, Stanley, Creed, Angela, Oscar, Kevin, Andy and more.</p>
             <label class="toggle"><input type="checkbox" id="packReplace"> Also replace personalities I customised myself</label>
@@ -209,6 +218,8 @@
           <p>Hire a <b>PR Reviewer</b>, <b>QA Tester</b>, <b>Bug Hunter</b>, <b>Security Auditor</b> or <b>Docs Reviewer</b> from <i>New session</i>. Let them work <i>inside the office</i> and they run in the background with read-only tools (QA roles may also run tests), then hand in a 📋 report.</p>
           <h3>Standups, handoffs & replay</h3>
           <p><b>🧍 Standup</b> sends everyone to the meeting room and writes yesterday, today and blockers for each agent. <b>🤝 Handoffs</b>: drag a report onto another agent to give them the job. <b>⏱️ Replay</b> plays back the last 24 hours. Themes and day/night lighting live in Dashboard → Settings.</p>
+          <h3>Agents hiring agents</h3>
+          <p>Agents at level 5+ can hire coworkers themselves (connect them once in Dashboard → Settings). A 🔧 Fixer works on its own git branch; other roles are read-only and report back.</p>
           <h3>Helpers</h3>
           <p>When a session spawns subagents, little 🤖 helper bots ride up the elevator and stand at the cubicle until their job is done.</p>
           <h3>Personality</h3>

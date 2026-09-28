@@ -50,6 +50,14 @@ Live status comes from `~/.claude/sessions`:
 - **Handoffs**: drag a report (or a latest reply) from the panel onto another agent, or use 🤝 *Hand off*. You get an editable first task ("Bug Hunter found this, Dwight fix it"), and it opens in a terminal, either continuing the target's session (they keep their memory) or as a new session in their project with their personality.
 - **Timeline & replay** (<kbd>T</kbd>): replay the last 24 hours at 1 minute to 1 hour per second. Scrub along an activity graph and watch agents arrive, work, take breaks and leave, just as they did.
 
+### Agents hiring agents
+Senior agents (level 5+ by default) can hire coworkers themselves, mid-task, to work in parallel:
+- Click **🔌 Connect to Claude Code** in Dashboard → Settings (or run the command shown there). It registers the bundled `agent-office` MCP server in your Claude Code user settings, and every session started afterwards gets three tools: `hire_agent`, `list_my_hires` and `get_report`.
+- A **🔧 Fixer** gets its own git branch (`office/<name>-<id>`) in a separate worktree under `~/.agent-office/worktrees`. It may edit, run tests and checks, and commit there, but never push. Your working copy and the senior agent's are never touched. Its report names the branch to review (`git diff HEAD...office/…`).
+- **PR Reviewer, QA Tester, Bug Hunter, Security Auditor** and **Docs Reviewer** hires are read-only, as in the office roles.
+- The office decides who may hire: it identifies the calling session from the MCP server's parent process, checks its level, and enforces a limit of active hires per agent (3 by default). You can change all of this, or switch hiring off, in Settings.
+- Hires walk into the office with a **👥 hired by …** badge, and you get a toast. Hires can't hire others: background agents start without MCP servers.
+
 ### Dashboard
 Press <kbd>D</kbd> for the office dashboard. Every card and section explains what it measures, and everything has a hover tooltip:
 - **Overview**: total spend, spend per hour of work, hands-on work time, lines changed, PRs, office motivation, spend and work time by project, who's working right now and who needs you.
@@ -177,7 +185,8 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 - The server listens on `127.0.0.1` only and reads your Claude Code data locally. Your transcripts are never uploaded anywhere by Agent Office.
 - The only things that leave your machine are what Claude Code itself sends when you use **Ask**, **Generate quirks** or a **background role**, all of which run the regular `claude` CLI with your account. The page also loads its fonts from Google Fonts.
 - **Ask** never writes to your session: Quick mode uses a separate, non-persistent prompt, and Deep mode uses a forked, non-persistent copy. Both run with all tools disabled.
-- **Background roles** get a fixed, read-only tool allowlist chosen on the server.
+- **Background roles** get a fixed tool allowlist chosen on the server: read-only for reviewers and auditors, plus test runners for QA. **Fixers** can also edit and commit, but only inside their own git worktree and branch, and they can never push.
+- **Hiring** only works for sessions on this machine at the required level, is rate-limited per agent, and can be switched off. The MCP server only talks to `127.0.0.1`.
 - **End session** asks twice before sending SIGTERM, and only to a `claude` process.
 - Personal settings live in `data/`, which is git-ignored.
 - Use `npm run demo` for screenshots, recordings and talks so no real session data is shown.
@@ -191,7 +200,8 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 ## Project structure
 
 ```
-server.mjs          Local HTTP server: parses ~/.claude, live status, XP, Ask, roles, terminal control
+server.mjs          Local HTTP server: parses ~/.claude, live status, XP, Ask, roles, hiring, terminal control
+mcp.mjs             MCP server that gives Claude Code sessions the hire_agent / list_my_hires / get_report tools
 demo.mjs            Made-up agents and projects for demo mode
 public/
   index.html        UI shell: header, side panel, dialogs, dashboard, help

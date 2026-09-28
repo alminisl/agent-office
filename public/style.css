@@ -248,3 +248,11 @@ body.replaying #office { filter: sepia(0.25) saturate(0.9); }
 #tip[hidden] { display: none; }
 [data-tip] { cursor: help; }
 button[data-tip], .feed [data-tip], th[data-sort][data-tip], label[data-tip] { cursor: pointer; }
+
+/* settings rows: label, then control, on one line (overrides the stacked dialog labels) */
+.settings label, .settings .toggle { flex-direction: row !important; align-items: center !important; justify-content: flex-start; gap: 8px; text-align: left; color: var(--text); font-size: 13px; flex-wrap: wrap; }
+.settings label input[type=checkbox] { width: auto; margin: 0; }
+.settings select { width: auto; }
+.settings .pack .row { align-items: center; flex-wrap: wrap; }
+.settings details { margin-top: 2px; }
+.settings details code { display: block; white-space: pre-wrap; word-break: break-all; margin-top: 6px; }

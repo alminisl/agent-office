@@ -56,6 +56,11 @@ async function refresh() {
   fresh.sort((a, b) => a.project.localeCompare(b.project) || a.id.localeCompare(b.id));
   assignUniqueNames(fresh);
   persistDefaults(fresh);
+  if (!firstLoad) for (const s of fresh) {
+    if (!s.hiredBy || allSessions.some(x => x.id === s.id)) continue;
+    const boss = fresh.find(x => x.id === s.hiredBy), r = roleFor(s.personality?.role);
+    toast(`👥 ${escapeHtml(boss ? personaFor(boss).name : 'A senior agent')} hired <b>${escapeHtml(personaFor(s).name)}</b>${r ? ` (${r.icon} ${escapeHtml(r.label)})` : ''}. They're on their way to a desk.`);
+  }
   allSessions = fresh;
   const visible = fresh.filter(s => showOffline || replay.on || s.live || agents.get(s.id)?.leaving);
   // the layout changes when the set of agents changes or someone moves into a private office
@@ -1156,6 +1161,8 @@ function updatePanelHeader() {
     `<span class="pill">${escapeHtml(preset)}</span>`,
     role ? `<span class="pill">${role.icon} ${escapeHtml(role.label)}</span>` : '',
     s.background ? '<span class="pill">🏢 in the office</span>' : '',
+    s.hiredBy ? `<span class="pill" data-tip="Hired by another agent through the agent-office tools">👥 hired by ${escapeHtml(personaFor(allSessions.find(x => x.id === s.hiredBy) || { id: s.hiredBy, personality: { name: p.hiredByName } }).name)}</span>` : '',
+    (() => { const n = allSessions.filter(x => x.hiredBy === s.id).length; return n ? `<span class="pill" data-tip="Coworkers this agent hired">👥 ${n} hire${n > 1 ? 's' : ''}</span>` : ''; })(),
   ].join('');
   $('#endBtn').hidden = !s.live;
   $('#hideBtn').hidden = s.live;
@@ -1517,7 +1524,28 @@ function renderLeaderboard() {
   <p class="muted small">XP: 10 per minute of hands-on work, 2 per tool call, ½ per line changed, 5 per prompt, 30 per helper, 250 per PR. 👑 marks the top agent.</p>`;
 }
 
+async function renderHiring() {
+  const [st, mcp] = await Promise.all([fetch('/api/settings').then(r => r.json()).catch(() => null), fetch('/api/mcp').then(r => r.json()).catch(() => null)]);
+  if (st) { $('#hireOn').checked = st.hiring.enabled; $('#hireLevel').value = String(st.hiring.minLevel); $('#hireMax').value = String(st.hiring.maxActive); }
+  if (mcp) {
+    $('#mcpStatus').textContent = mcp.demo ? '(not available in demo mode)' : mcp.installed ? '✅ Connected. New sessions can hire.' : 'Not connected yet.';
+    $('#mcpInstall').textContent = mcp.installed ? '🔌 Disconnect' : '🔌 Connect to Claude Code';
+    $('#mcpInstall').dataset.installed = mcp.installed ? '1' : '';
+    $('#mcpCmd').textContent = mcp.command;
+  }
+}
+const saveHiring = () => post('/api/settings', { hiring: { enabled: $('#hireOn').checked, minLevel: Number($('#hireLevel').value), maxActive: Number($('#hireMax').value) } }).then(() => toast('Hiring settings saved.'));
+$('#hireOn').onchange = saveHiring; $('#hireLevel').onchange = saveHiring; $('#hireMax').onchange = saveHiring;
+$('#mcpInstall').onclick = async () => {
+  const btn = $('#mcpInstall'), install = !btn.dataset.installed;
+  btn.disabled = true; $('#mcpStatus').textContent = install ? 'Connecting…' : 'Disconnecting…';
+  try { await post('/api/mcp', { install }); toast(install ? '🔌 Connected. Sessions you start from now on can hire coworkers.' : 'Disconnected.'); }
+  catch (e) { toast(`Could not change the MCP setup: ${escapeHtml(e.message)}`); }
+  btn.disabled = false; renderHiring();
+};
+
 function renderSettings() {
+  renderHiring();
   $('#setOffline').checked = showOffline;
   $('#setMatrix').checked = matrix.on;
   $('#setCritters').checked = crittersOn;

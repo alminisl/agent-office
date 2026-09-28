@@ -162,6 +162,8 @@ export function workStyleFor(persona) {
 // Roles: ready-made jobs for new agents. `task` pre-fills the first prompt (edit it freely),
 // `preset` picks a fitting personality. Tools for background runs are decided by the server.
 export const ROLES = [
+  { key: 'fixer', icon: '🔧', label: 'Fixer', preset: 'intern',
+    task: 'Fix the following problem. Make the change, run the relevant tests, and commit on your branch:\n\n' },
   { key: 'reviewer', icon: '🔎', label: 'PR Reviewer', preset: 'detective',
     task: 'Review the open pull requests / merge requests in this repository (use the gh or glab CLI). For each one: summarize the change in two lines, list bugs and risks with file:line references, and suggest concrete improvements. Rank findings by severity.' },
   { key: 'qa', icon: '🧪', label: 'QA Tester', preset: 'perfectionist',
