@@ -28,6 +28,12 @@ Live status comes from `~/.claude/sessions`:
 - **Offline**: out of office with an empty chair. Hide them with the *Show offline* toggle.
 - Subagents show up as little helper robots that ride the elevator and stand at the parent's desk until their job is done.
 
+### Office life
+- **Water-cooler gossip**: when agents meet on a break, they talk about what really happened: "Heard Frances finished the QA report", "Mira opened another PR!", "Someone should unblock Ada". The same events show up as **📰 Office news** on the dashboard.
+- **Relationships**: agents on the same project, and hires and their bosses, start out as friends, and every chat makes the bond stronger. Friends seek each other out and high-five. A few personalities are rivals (Dwight vs Jim, Agent Smith vs Neo, Angela vs Oscar…). The agent panel lists friends and rivals.
+- **Celebrations**: a level-up, a new PR, a finished report or a completed board card puts a cake on the kitchen table, and nearby colleagues (friends first) walk over to cheer. A failed run gets a sympathetic 🫂.
+- **Energy & the daily rhythm**: energy drains while working and refills on breaks (coffee fastest). Tired agents slump and head for the kitchen. There's a morning coffee rush and a lunch rush at noon, evenings are for the lounge, and weekends are slow.
+
 ### Progress & gamification
 - XP from hands-on work time, tool calls, lines changed, prompts, helpers spawned and pull requests.
 - Levels with ranks from Intern to Legend, 12 achievements, and a 👑 for the top agent.

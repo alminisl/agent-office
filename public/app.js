@@ -75,6 +75,7 @@ async function refresh() {
   if (!firstLoad) for (const s of fresh) {
     if (!s.hiredBy || allSessions.some(x => x.id === s.id)) continue;
     const boss = fresh.find(x => x.id === s.hiredBy), r = roleFor(s.personality?.role);
+    setTimeout(() => { const a = agents.get(s.id); if (a) officeNews('hired', a, { boss: boss ? personaFor(boss).name : 'Someone' }); }, 2000);
     toast(`👥 ${escapeHtml(boss ? personaFor(boss).name : 'A senior agent')} hired <b>${escapeHtml(personaFor(s).name)}</b>${r ? ` (${r.icon} ${escapeHtml(r.label)})` : ''}. They're on their way to a desk.`);
   }
   allSessions = fresh;
@@ -176,6 +177,7 @@ class Agent {
     this.walkPhase = 0; this.bubble = null; this.bubbleT = 0; this.thinking = false;
     this.quipT = rand(6, 14); this.quip = null; this.celebrateT = 0;
     this.away = false; this.leaving = false;
+    this.energy = energyStore[session.id] ?? rand(60, 95);
     this.persona = personaFor(session);
     this.style = styleFor(this.persona);
   }
@@ -186,12 +188,17 @@ class Agent {
     this.style = styleFor(this.persona);
     if (!silent && !firstLoad) {
       if (s.level > (prev.level || 0) && prev.level) this.levelUp(s.level);
+      if ((s.prs || 0) > (prev.prs || 0)) { officeNews('pr', this); celebrate(this); }
+      if (s.status === 'waiting' && prev.status !== 'waiting') this.waitingSince = Date.now();
+      const hours = Math.floor((s.workMs || 0) / 3600e3);
+      if (hours >= 2 && hours > Math.floor((prev.workMs || 0) / 3600e3)) officeNews('marathon', this, { hours });
       const newBadges = (s.badges || []).filter(b => !(prev.badges || []).includes(b));
       if (prev.badges && newBadges.length) this.earn(newBadges);
       if (prev.runState === 'running' && s.runState && s.runState !== 'running') {
         const r = roleFor(this.persona.role);
         this.celebrateT = 3; burst(this.x, this.y, ['#4cd964', '#fff']);
         this.quip = s.runState === 'done' ? '📋 Report is ready!' : '😵 Something went wrong'; this.quipT = -4;
+        officeNews(s.runState === 'done' ? 'report' : 'failed', this, { role: r?.label?.toLowerCase() }); celebrate(this, s.runState === 'done');
         toast(`${r ? r.icon : '📋'} ${escapeHtml(this.persona.name)} finished${r ? ` the ${escapeHtml(r.label.toLowerCase())} job` : ''}. <a href="#" data-open-report="${this.id}">Read the report</a>`);
       }
       if (prev.live && !s.live) this.leaveOffice();
@@ -224,6 +231,7 @@ class Agent {
   levelUp(level) {
     this.celebrateT = 4;
     this.quip = `⭐ LEVEL UP! Lv ${level}`; this.quipT = -4;
+    officeNews(level === EXEC_LEVEL ? 'promotion' : 'levelup', this, { level }); celebrate(this);
     burst(this.x, this.y, ['#ffe066', '#ff9f43', '#fff', '#7fe3ff']);
     toast(level === EXEC_LEVEL
       ? `🎉 ${escapeHtml(this.persona.name)} reached <b>level ${level}</b> and got promoted to a <b>private office</b>!`
@@ -231,6 +239,7 @@ class Agent {
   }
   earn(badges) {
     this.celebrateT = 3;
+    officeNews('badge', this, { badge: BADGES[badges[0]]?.name || 'a badge' });
     burst(this.x, this.y, ['#4cd964', '#fff', '#c792ff']);
     toast(`🏅 ${escapeHtml(this.persona.name)} earned ${badges.map(b => `${BADGES[b]?.icon || ''} <b>${escapeHtml(BADGES[b]?.name || b)}</b>`).join(', ')}`);
   }
@@ -248,6 +257,13 @@ class Agent {
   arrive() {
     const sp = this.spot;
     this.path = [];
+    if (this.task === 'cheer' && this.cheer) { this.quip = this.cheer; this.quipT = -3; this.celebrateT = 2; this.cheer = null; }
+    if (this.task === 'chat' && this.chatWith) {
+      const b = bondOf(this, this.chatWith);
+      bump(this, this.chatWith, 1);
+      if (b >= 6) { this.celebrateT = 1.2; this.chatWith.celebrateT = 1.2; this.quip = '🙌 High five!'; this.quipT = -2.5; }
+      else if (b < 0) { this.quip = { dwight: 'False.', jim: '👀', smith: 'Mr. Anderson…', neo: 'Whoa.', angela: 'Hmph.' }[this.persona.preset] || '😒'; this.quipT = -2.5; }
+    }
     if (this.task === 'leave') { this.away = true; this.leaving = false; openElevator(); refresh(); return; }
     if (this.faceTarget) { this.dir = this.faceTarget; this.faceTarget = null; }
     else if (sp) this.dir = sp.dir;
@@ -275,7 +291,15 @@ class Agent {
     const opts = [
       ['desk', this.id === 'pm' ? 6 : 1], ['kitchen', 2], ['gym', 1.4], ['games', 1.5], ['lounge', 1.5],
       ['wander', 1], ['chat', 1.2], ['visit', 1], ['office', 0.5],
-    ].map(([k, w]) => [k, k === fav ? w * 3 : w]);
+    ].map(([k, w]) => [k, k === fav ? w * 3 : w]).map(([k, w]) => {
+      const r = rhythm();
+      if (k === 'kitchen' && (r.lunch || r.coffee || cakeT > 0 || this.energy < 30)) w *= this.energy < 30 ? 5 : 3;
+      if (k === 'lounge' && (r.evening || this.energy < 20)) w *= 2;
+      if ((k === 'games' || k === 'lounge') && r.weekend) w *= 3;
+      if (k === 'desk' && r.weekend) w *= 0.4;
+      if (k === 'gym' && this.energy < 30) w *= 0.2;
+      return [k, w];
+    });
     let r = Math.random() * opts.reduce((s, o) => s + o[1], 0);
     let pick = opts[0][0];
     for (const [k, w] of opts) { if ((r -= w) <= 0) { pick = k; break; } }
@@ -291,7 +315,9 @@ class Agent {
     }
     if (pick === 'chat') {
       const others = [...agents.values()].filter(a => a !== this && !a.away && !a.working && !a.path.length && a.spot && a.spot.zone !== 'desk');
-      const buddy = choice(others);
+      // friends are much more likely to hang out, rivals rarely seek each other out
+      const weighted = others.flatMap(o => { const b = bondOf(this, o); return Array(b >= 3 ? 4 : b < 0 ? (Math.random() < 0.3 ? 1 : 0) : 1).fill(o); });
+      const buddy = choice(weighted.length ? weighted : others);
       if (buddy) {
         const bt = buddy.tile;
         const free = [[0, 1, 'up'], [1, 0, 'left'], [-1, 0, 'right'], [0, -1, 'down']]
@@ -307,12 +333,14 @@ class Agent {
 
   update(dt) {
     if (this.away) return;
+    updateEnergy(this, dt);
     this.celebrateT -= dt;
     // personality: every so often they mutter something in character
     this.quipT -= dt;
     if (this.quipT <= 0 && this.quip === null) {
       const nightShift = darkness() > 0.5 && (this.session.badges || []).includes('nightowl') ? ['🦉 Night shift!', '🦉 Best hours to code', '🦉 Who needs sleep'] : [];
-      const lines = this.contextPct > 0.8 && this.working ? ['🥵 my head is full…', '🥵 maybe /compact?', '🥵 so… much… context'] : [...(this.working ? this.style.work : this.style.idle), ...nightShift];
+      const tired = this.energy < 25 ? ['😴 need coffee…', '🥱 long day', '😪 so sleepy'] : [];
+      const lines = this.contextPct > 0.8 && this.working ? ['🥵 my head is full…', '🥵 maybe /compact?', '🥵 so… much… context'] : tired.length && Math.random() < 0.6 ? tired : [...(this.working ? this.style.work : this.style.idle), ...nightShift];
       this.quip = choice(lines); this.quipT = 3;
     } else if (this.quipT <= 0) { this.quip = null; this.quipT = rand(10, 22); }
 
@@ -352,7 +380,10 @@ class Agent {
   }
 
   idleBubble() {
-    if (this.task === 'chat' && this.chatWith) return choice(['💬', '😂', '🤔', '👀', '🙌']);
+    if (this.task === 'chat' && this.chatWith) return (Math.random() < 0.55 && gossipFor(this, this.chatWith)) || choice(['💬', '😂', '🤔', '👀', '🙌']);
+    if ((this.spot?.id === 'floor-cooler' || this.spot?.zone === 'kitchen') && Math.random() < 0.35) { const g = gossipFor(this); if (g) return g; }
+    if (this.spot?.zone === 'kitchen' && cakeT > 0) return '🍰';
+    if (this.spot?.zone === 'kitchen' && rhythm().lunch && this.spot.pose === 'sit') return choice(['🍕', '🥗', '🍜']);
     if (this.spot?.zone === 'kitchen' && Math.random() < 0.08) return choice(['🔴💊', '🔵💊']);
     return this.spot?.bubble || (this.spot?.zone === 'desk' ? choice(['🤔', '📝', this.style.emoji]) : null);
   }
@@ -386,7 +417,9 @@ class Agent {
     if (s.status === 'busy') return !s.activity || s.activity === 'Talking' ? '✍️ Writing a reply' : `⌨️ Working: ${this.styledActivity(s.activity)}`;
     if (s.status === 'waiting') return `🙋 Needs you: ${s.waitingFor || 'input'}`;
     if (isYourTurn(s)) return s.runState === 'done' ? '📋 Report ready' : '💬 Waiting for your reply';
-    if (this.task === 'chat' && this.chatWith) return `💬 Chatting with ${this.chatWith.persona.name}`;
+    if (this.task === 'cheer' && this.chatWith) return `🎉 Celebrating with ${this.chatWith.persona.name}`;
+    if (this.task === 'chat' && this.chatWith) return `💬 Chatting with ${this.chatWith.persona.name}${bondOf(this, this.chatWith) >= 6 ? ' (friends)' : ''}`;
+    if (this.spot?.zone === 'kitchen' && rhythm().lunch && this.spot.pose === 'sit') return '🍕 Lunch break';
     if (this.spot?.zone === 'visit') {
       const host = [...agents.values()].find(a => a.room?.visit === this.spot);
       return `👀 Checking on ${host?.persona.name || 'a colleague'}`;
@@ -421,6 +454,7 @@ class Agent {
 
   // small per-personality motion while working
   fidgetOffset() {
+    if (!this.path.length && this.energy < 20) return [0, 1]; // slumped
     if (this.path.length || this.spot?.zone !== 'desk' || this.session.status !== 'busy') return [0, 0];
     const f = this.contextPct > 0.8 ? 'shake' : this.style.fidget;
     if (f === 'bounce') return [0, -Math.round(Math.abs(Math.sin(time * 7)) * 1.5)];
@@ -503,6 +537,7 @@ function burst(x, y, colors) {
 }
 function updateEffects(dt) {
   elevatorT -= dt;
+  cakeT = Math.max(0, cakeT - dt);
   if (world) world.elevator.open = Math.max(0, Math.min(1, elevatorT > 1.6 ? (2.2 - elevatorT) / 0.6 : elevatorT / 0.6));
   for (const p of particles) { p.vy += 90 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
   particles = particles.filter(p => p.life > 0);
@@ -591,7 +626,14 @@ window.addEventListener('resize', () => { if (replay.on) drawSparkline(); });
 // ---------------- TODO board ----------------
 let boardItems = [];
 async function loadBoard() {
+  const before = new Map(boardItems.map(i => [i.id, i.status]));
   try { boardItems = (await (await fetch('/api/board')).json()).items || []; } catch { return; }
+  if (before.size) for (const it of boardItems) {
+    if (it.status === 'done' && before.get(it.id) && before.get(it.id) !== 'done') {
+      const a = agents.get(it.sessionId);
+      if (a) { officeNews('card', a, { title: it.title.slice(0, 40) }); celebrate(a); }
+    }
+  }
   if (world?.kanban) world.kanban.counts = ['todo', 'doing', 'done'].map(st => boardItems.filter(i => i.status === st).length);
   if (!$('#todoModal').hidden) renderTodo();
 }
@@ -972,6 +1014,111 @@ function drawLighting(s) {
   ctx.restore();
 }
 
+// ---------------- office life: news & gossip, relationships, celebrations, energy ----------------
+// News comes from real changes in the office (level-ups, reports, PRs, board cards, hires...).
+// Agents gossip about it at the water cooler, friends celebrate together, and everyone has
+// energy that drains while working and refills on breaks.
+const news = [];                     // { t, type, who, text, gossip }
+const bonds = store.get('bonds', {}); // "idA|idB" -> score (chats and teamwork make friends)
+const energyStore = store.get('energy', {});
+let cakeT = 0;
+const RIVALS = [['dwight', 'jim'], ['smith', 'neo'], ['angela', 'oscar'], ['sarcastic', 'intern'], ['pirate', 'bard'], ['angela', 'kevin']];
+const pairKey = (a, b) => [a, b].sort().join('|');
+
+function officeNews(type, a, data = {}) {
+  const n = a.persona.name, lines = {
+    levelup: [`${n} just hit level ${data.level}!`, `Did you hear? ${n} leveled up`, `${n} is on fire lately`],
+    promotion: [`${n} got a private office!`, `Fancy: ${n} moved into the executive wing`],
+    report: [`${n} finished the ${data.role || 'big'} report`, `${n} handed in a report`],
+    failed: [`Poor ${n}, their run failed`, `Rough day for ${n}`],
+    pr: [`${n} shipped a PR in ${a.session.project}`, `${n} opened another PR!`],
+    card: [`${n} ticked off "${data.title}"`, `One less TODO thanks to ${n}`],
+    hired: [`${data.boss} hired ${n}`, `New face: ${n} started today`],
+    waiting: [`${n}'s been waiting on the boss for ages`, `Someone should unblock ${n}`],
+    marathon: [`${n} has been coding for ${data.hours}h`, `${n} never takes a break`],
+    badge: [`${n} earned ${data.badge}`, `${n} unlocked ${data.badge}!`],
+  }[type] || [`${n} did something interesting`];
+  const item = { t: Date.now(), type, who: a.id, text: choice(lines), gossip: lines };
+  news.unshift(item);
+  news.length = Math.min(news.length, 40);
+  return item;
+}
+function gossipFor(a, partner) {
+  const fresh = news.filter(x => Date.now() - x.t < 3 * 3600e3 && x.who !== a.id);
+  const aboutPartner = partner && fresh.find(x => x.who === partner.id);
+  if (aboutPartner && Math.random() < 0.6) {
+    return { levelup: 'Congrats on the level-up!', promotion: 'Nice new office!', report: 'Great report!', failed: 'Sorry about the failed run 🫂', pr: 'Nice PR!', card: 'Thanks for closing that card', hired: 'Welcome aboard!', badge: 'Congrats on the badge!' }[aboutPartner.type] || 'Nice work lately!';
+  }
+  const item = choice(fresh);
+  return item ? `🗣️ ${choice(item.gossip)}` : null;
+}
+
+function bondOf(a, b) {
+  const rival = RIVALS.some(([x, y]) => (a.persona.preset === x && b.persona.preset === y) || (a.persona.preset === y && b.persona.preset === x));
+  if (rival) return -5;
+  let score = bonds[pairKey(a.id, b.id)] || 0;
+  if (a.session.project === b.session.project) score += 3;
+  if (a.session.hiredBy === b.id || b.session.hiredBy === a.id) score += 6;
+  return score;
+}
+function relationships(a) {
+  const others = [...agents.values()].filter(b => b !== a).map(b => ({ b, s: bondOf(a, b) }));
+  return { friends: others.filter(o => o.s >= 3).sort((x, y) => y.s - x.s).slice(0, 3).map(o => o.b), rivals: others.filter(o => o.s < 0).map(o => o.b) };
+}
+function bump(a, b, by = 1) {
+  const k = pairKey(a.id, b.id);
+  bonds[k] = Math.min(12, (bonds[k] || 0) + by);
+  store.set('bonds', bonds);
+}
+
+// cake, clapping and sympathy
+function celebrate(a, good = true) {
+  if (!world || a.away) return;
+  if (good) cakeT = 90;
+  const { friends } = relationships(a);
+  const idle = [...agents.values()].filter(b => b !== a && !b.away && !b.working && !b.path.length && b.task !== 'meeting');
+  const crowd = [...friends.filter(f => idle.includes(f)), ...idle.filter(b => !friends.includes(b))].slice(0, good ? 3 : 1);
+  const t = a.tile;
+  const around = [[0, 1, 'up'], [1, 0, 'left'], [-1, 0, 'right'], [0, -1, 'down'], [1, 1, 'up'], [-1, 1, 'up'], [0, 2, 'up']]
+    .map(([dx, dy, d]) => ({ x: t.x + dx, y: t.y + dy, d })).filter(p => world.walkable[p.y]?.[p.x]);
+  crowd.forEach((b, i) => {
+    const spot = around[i];
+    if (!spot || !b.goTo(spot, null, 'cheer')) return;
+    b.faceTarget = spot.d; b.chatWith = a;
+    b.cheer = good ? choice([`👏 Congrats ${a.persona.name}!`, '🎉 Woohoo!', `🙌 Go ${a.persona.name}!`]) : `🫂 Rough one, ${a.persona.name}`;
+    bump(a, b, 2);
+  });
+}
+
+// energy & the daily rhythm
+function rhythm() {
+  const d = new Date(), h = d.getHours() + d.getMinutes() / 60, weekend = d.getDay() === 0 || d.getDay() === 6;
+  return { lunch: h >= 12 && h < 13.5, coffee: h >= 8.5 && h < 10, evening: h >= 18, weekend };
+}
+function updateEnergy(a, dt) {
+  if (a.away) return;
+  const busy = a.session.status === 'busy' && a.spot?.zone === 'desk';
+  const onBreak = a.spot && a.spot.zone !== 'desk' && !a.path.length;
+  let delta = busy ? -0.04 : onBreak ? 0.18 : 0.03;          // per second: ~40 min of work empties you
+  if (onBreak && a.spot.zone === 'kitchen') delta = 0.45;    // coffee is a power-up
+  if (onBreak && a.spot.zone === 'lounge') delta = 0.3;
+  a.energy = Math.max(0, Math.min(100, a.energy + delta * dt * (a.style.speed || 1)));
+}
+setInterval(() => { for (const a of agents.values()) energyStore[a.id] = Math.round(a.energy); store.set('energy', energyStore); }, 10000);
+
+// seed the news on first load from what already happened, so there is something to talk about
+function seedNews() {
+  for (const a of agents.values()) {
+    const s = a.session;
+    if (s.runState === 'done' || s.hasReport) officeNews('report', a, { role: roleFor(a.persona.role)?.label?.toLowerCase() });
+    if (s.prs) officeNews('pr', a);
+    if (s.hiredBy) { const boss = agents.get(s.hiredBy); officeNews('hired', a, { boss: boss?.persona.name || 'Someone' }); }
+    if ((s.workMs || 0) > 2 * 3600e3 && s.live) officeNews('marathon', a, { hours: Math.floor(s.workMs / 3600e3) });
+    if (s.status === 'waiting') officeNews('waiting', a);
+  }
+  news.forEach(x => { x.t -= Math.random() * 3600e3; });
+}
+
 // ---------------- rendering ----------------
 function scale() {
   if (zoom) return zoom;
@@ -1029,6 +1176,17 @@ function render() {
   items.sort((p, q) => p.y - q.y).forEach(i => i.draw());
   for (const o of world.objects) if (o.over) FURNITURE[o.type](g, o.x * T, o.y * T, o, time);
   for (const p of particles) { g.fillStyle = p.c; g.fillRect(Math.round(p.x), Math.round(p.y), 2, 2); }
+  if (cakeT > 0) {
+    const tb = world.objects.find(o => o.type === 'table');
+    if (tb) {
+      const X = Math.round((tb.x + tb.w / 2) * T) - 6, Y = tb.y * T + 2;
+      g.fillStyle = '#f4efe6'; g.fillRect(X - 1, Y + 9, 14, 2);            // plate
+      g.fillStyle = '#c0392b'; g.fillRect(X, Y + 3, 12, 6);                // cake
+      g.fillStyle = '#fff5f0'; g.fillRect(X, Y + 3, 12, 2);                // frosting
+      g.fillStyle = '#f1c40f'; g.fillRect(X + 5, Y - 1, 2, 4);             // candle
+      if (Math.floor(time * 6) % 2) { g.fillStyle = '#ff9f43'; g.fillRect(X + 5, Y - 3, 2, 2); }
+    }
+  }
 
   // blit scaled
   const s = scale() * (window.devicePixelRatio || 1);
@@ -1403,6 +1561,17 @@ function renderWork() {
       <div><b>${d.toolCount}</b><span>tool calls</span></div>
       <div><b>${d.promptCount}</b><span>prompts</span></div>
     </div>
+    ${(() => {
+      const a = agents.get(d.id);
+      if (!a) return '';
+      const rel = relationships(a), e = Math.round(a.energy);
+      const names = list => list.map(b => `<span class="pill" data-tip="${escapeHtml(b.session.project)}">${escapeHtml(b.persona.name)}</span>`).join(' ');
+      return `<h3>Energy &amp; relationships</h3>
+        <div class="bar big" data-tip="Drains while working, refills on breaks (coffee is fastest). Below 25% they get tired."><div style="width:${e}%;background:${e < 25 ? '#ff6b6b' : e < 55 ? '#f5b83d' : '#4cd964'}"></div></div>
+        <div class="muted small">${e}% energy${e < 25 ? ', needs a coffee break ☕' : ''}</div>
+        <div class="small rel">🤝 Friends: ${rel.friends.length ? names(rel.friends) : '<span class="muted">none yet (they bond by working on the same project and chatting)</span>'}</div>
+        ${rel.rivals.length ? `<div class="small rel">⚔️ Rivals: ${names(rel.rivals)}</div>` : ''}`;
+    })()}
     <h3>Context</h3>
     <div class="bar big"><div style="width:${(pct * 100).toFixed(1)}%;background:${contextColor(pct)}"></div></div>
     <div class="muted small">${fmtTokens(d.context)} of ${fmtTokens(d.contextWindow)} tokens (${Math.round(pct * 100)}%)${pct > 0.8 ? '. Getting full, consider <code>/compact</code>' : ''}</div>
@@ -1661,6 +1830,8 @@ function renderOverview() {
         <div class="feed">${busy.map(s => `<div data-id="${s.id}" data-tip="Click to open ${escapeHtml(personaFor(s).name)}'s panel (${escapeHtml(s.project)}: ${escapeHtml(s.title)})">${avatarCell(s)}<b>${escapeHtml(personaFor(s).name)}</b><span class="what">${escapeHtml(s.activity || s.title)}</span></div>`).join('') || '<p class="muted small">Nobody is working. Time to hand out tasks?</p>'}</div>
         ${section('Needs you', 'Agents blocked on a permission ❗ or waiting for your reply 💬. Click one to jump to them.')}
         <div class="feed">${needs.map(s => `<div data-id="${s.id}" data-tip="${s.status === 'waiting' ? 'Blocked until you approve or answer in their terminal' : 'Finished their turn and is waiting for your next message'}. Click to open their panel.">${avatarCell(s)}<b>${escapeHtml(personaFor(s).name)}</b><span class="what">${s.status === 'waiting' ? `❗ ${escapeHtml(s.waitingFor || 'waiting for input')}` : '💬 your turn'} · ${escapeHtml(s.title)}</span></div>`).join('') || '<p class="muted small">Nobody is waiting on you. 🎉</p>'}</div>
+        ${section('📰 Office news', 'What happened lately, and what the agents gossip about at the water cooler.')}
+        <div class="feed">${news.slice(0, 8).map(n => `<div data-id="${n.who}" data-tip="${escapeHtml(ago(n.t))}"><span>${{ levelup: '⭐', promotion: '🎉', report: '📋', failed: '😵', pr: '🚀', card: '✅', hired: '👥', waiting: '⏳', marathon: '🏃', badge: '🏅' }[n.type] || '📰'}</span><span class="what">${escapeHtml(n.gossip[0])}</span></div>`).join('') || '<p class="muted small">Quiet day so far.</p>'}</div>
         ${section('Helpers on the floor', 'Subagents running for an agent right now, shown as 🤖 robots at their desk.')}
         <p class="muted small">${helpers.size ? `${helpers.size} 🤖 helper${helpers.size > 1 ? 's' : ''} working for ${new Set([...helpers.values()].map(h => h.parent.persona.name)).size} agent(s)` : 'No helpers right now.'}</p>
       </div>
@@ -2000,6 +2171,9 @@ BADGES = Object.fromEntries(config.achievements.map(a => [a.id, a]));
 $('#openBtn').textContent = `🖥️ Open in ${config.terminal}`;
 await loadPM();
 await refresh();
+seedNews();
+// agents stuck waiting become office gossip
+setInterval(() => { for (const a of agents.values()) if (a.session.status === 'waiting' && a.waitingSince && Date.now() - a.waitingSince > 10 * 60e3 && !news.some(n => n.who === a.id && n.type === 'waiting' && Date.now() - n.t < 3600e3)) officeNews('waiting', a); }, 60000);
 if (!store.get('seenHelp', false)) { store.set('seenHelp', true); openHelp(); }
 setInterval(refresh, 3000);
 requestAnimationFrame(loop);
