@@ -100,3 +100,7 @@ export function demoSavePersonality(sid, p) {
 
 export const DEMO_REPLY = "Honestly? It's going well. The tricky part was the edge cases around empty carts, and those are covered by tests now. I'd like one more pass on error messages before we ship. Want me to open the PR after that?";
 export const DEMO_QUIRKS = { emoji: '🎸', work: ['Rock on!', 'Shredding this bug', 'Encore!', 'Turn it up'], idle: ['Air guitar break', 'Soundcheck', 'Tour snacks'], verbs: { Editing: 'Riffing on', Reading: 'Tuning', Searching: 'Jamming for', Running: 'Playing' } };
+
+export function demoSavePersonalities(changes) {
+  return Object.fromEntries(Object.entries(changes).map(([id, p]) => [id, demoSavePersonality(id, p)]));
+}

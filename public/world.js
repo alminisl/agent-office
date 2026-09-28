@@ -51,7 +51,8 @@ export function buildWorld(sessions) {
     for (let y = top; y <= top + 5; y++) { set(wl, y, 'wall'); set(wl + 8, y, 'wall'); }
     const s = exec[i];
     const tint = s ? projectColor(s.project) : '#8d8a84';
-    for (let y = top + 1; y <= top + 4; y++) for (let x = wl + 1; x <= wl + 7; x++) set(x, y, 'room', { tint });
+    // an empty office has no door: seal it so nobody can end up inside
+    for (let y = top + 1; y <= top + 4; y++) for (let x = wl + 1; x <= wl + 7; x++) set(x, y, 'room', { tint, sealed: !s });
     if (!s) { objects.push({ type: 'plant', x: wl + 4, y: top + 2, w: 1, h: 1, block: true }); continue; }
     set(wl + 4, top + 5, 'room', { tint, door: true });
     const index = rooms.length;
@@ -176,7 +177,7 @@ export function buildWorld(sessions) {
   }
 
   // blocking grid
-  const walkable = tiles.map(row => row.map(t => t.kind !== 'wall'));
+  const walkable = tiles.map(row => row.map(t => t.kind !== 'wall' && !t.sealed));
   for (const o of objects) if (o.block) for (let y = o.y; y < o.y + o.h; y++) for (let x = o.x; x < o.x + o.w; x++) if (walkable[y]) walkable[y][x] = false;
 
   // hallway wander points

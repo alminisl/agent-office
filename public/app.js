@@ -1,6 +1,6 @@
 import { T, characterFrame, helperFrame, critterFrame, drawFloor, drawWall, FURNITURE } from './sprites.js';
 import { buildWorld, findPath, projectColor, EXEC_LEVEL } from './world.js';
-import { PRESETS, SKINS, HAIRS, SHIRTS, PANTS, HAIR_STYLES, personaFor, styleFor, assignUniqueNames, workStyleFor, ROLES, roleFor, PACKS, presetOptions } from './personas.js';
+import { PRESETS, SKINS, HAIRS, SHIRTS, PANTS, HAIR_STYLES, personaFor, styleFor, assignUniqueNames, workStyleFor, ROLES, roleFor, PACKS, presetOptions, defaultPersona } from './personas.js';
 
 const $ = s => document.querySelector(s);
 const canvas = $('#office');
@@ -48,6 +48,7 @@ async function refresh() {
   // cubicles are grouped by project ("neighbourhoods"), then ordered by id so seats stay put
   fresh.sort((a, b) => a.project.localeCompare(b.project) || a.id.localeCompare(b.id));
   assignUniqueNames(fresh);
+  persistDefaults(fresh);
   allSessions = fresh;
   const visible = fresh.filter(s => showOffline || s.live || agents.get(s.id)?.leaving);
   // the layout changes when the set of agents changes or someone moves into a private office
@@ -62,6 +63,26 @@ async function refresh() {
   renderStats();
   if (selectedId) updatePanelHeader();
   firstLoad = false;
+}
+
+// The first time an agent shows up, save their generated name and look, so they keep them
+// forever (otherwise names could shuffle when the set of sessions changes). `auto` marks
+// these as defaults, so personality packs and "customised" checks still treat them as untouched.
+const persisting = new Set();
+function persistDefaults(list) {
+  const batch = {};
+  for (const s of list) {
+    if (s.personality || persisting.has(s.id)) continue;
+    persisting.add(s.id);
+    const p = { ...defaultPersona(s.id), auto: true };
+    if (s.uniqueName) p.name = s.uniqueName;
+    p.impact = true;
+    p.workStyle = workStyleFor(p);
+    s.personality = p;
+    batch[s.id] = { replace: p };
+  }
+  // one request, one write on the server
+  if (Object.keys(batch).length) post('/api/personalities', batch).catch(() => { for (const id of Object.keys(batch)) persisting.delete(id); });
 }
 
 function rebuild() {
@@ -88,7 +109,7 @@ function rebuild() {
     const t = a.tile;
     if (!s.live && !a.leaving) {
       a.away = true; a.release(); a.path = [];     // out of office
-    } else if (existing && !a.away && world.walkable[t.y]?.[t.x]) {
+    } else if (existing && !a.away && world.walkable[t.y]?.[t.x] && findPath(world, t, room.seat)) {
       // layout changed: stay where you are and pick something new to do shortly
       a.x = t.x; a.y = t.y; a.path = []; a.spot = null; a.task = null; a.timer = rand(0.3, 2);
     } else if (!existing && !firstLoad) {
@@ -1057,7 +1078,7 @@ $('#personaForm').onsubmit = async e => {
   e.preventDefault();
   previewDraft();
   const id = selectedId;
-  const body = { ...draft, workStyle: draft.impact !== false ? workStyleFor(draft) : '' };
+  const body = { ...draft, auto: false, workStyle: draft.impact !== false ? workStyleFor(draft) : '' };
   const saved = await (await fetch(`/api/personality/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
   const s = sessions.find(x => x.id === id);
   const ag = agents.get(id);
@@ -1236,9 +1257,9 @@ async function applyPack(key) {
   const pack = PACKS[key], replaceCustom = $('#packReplace').checked;
   const list = [...allSessions].sort((a, b) => (b.xp || 0) - (a.xp || 0));
   let i = 0, cast = 0;
-  const jobs = [];
+  const batch = {};
   for (const s of list) {
-    const mine = s.personality && !s.personality.pack;
+    const mine = s.personality && !s.personality.pack && !s.personality.auto;
     if (mine && !replaceCustom) continue;
     const c = pack.cast[i % pack.cast.length];
     const round = Math.floor(i / pack.cast.length);
@@ -1247,10 +1268,10 @@ async function applyPack(key) {
     const p = { ...c, name: round ? `${c.name} ${['', 'II', 'III', 'IV'][round] || round + 1}` : c.name,
       traits: preset.traits, hangout: preset.hangout, impact: s.personality?.impact ?? true, role: s.personality?.role || null, pack: key, before };
     p.workStyle = p.impact !== false ? workStyleFor(p) : '';
-    jobs.push(post(`/api/personality/${s.id}`, { replace: p }));
+    batch[s.id] = { replace: p };
     i++; cast++;
   }
-  await Promise.all(jobs);
+  if (cast) await post('/api/personalities', batch);
   toast(cast ? `📎 ${cast} agents now work for <b>${pack.label}</b>. Welcome to Scranton.` : 'Everyone already has a personality you customised. Tick "Also replace…" to recast them.');
   for (const a of agents.values()) a.draftPersona = null;
   await refresh();
@@ -1258,7 +1279,7 @@ async function applyPack(key) {
 }
 async function resetPack() {
   const packed = allSessions.filter(s => s.personality?.pack);
-  await Promise.all(packed.map(s => post(`/api/personality/${s.id}`, s.personality.before ? { replace: s.personality.before } : { reset: true })));
+  if (packed.length) await post('/api/personalities', Object.fromEntries(packed.map(s => [s.id, s.personality.before ? { replace: s.personality.before } : { reset: true }])));
   toast(packed.length ? `↩️ ${packed.length} agents are back to their own personalities.` : 'No pack is active.');
   await refresh();
   if (selectedId) fillPersonaForm();

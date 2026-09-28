@@ -8,7 +8,7 @@ import os from 'node:os';
 import { spawn, execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { demoSessions, demoDetail, demoSavePersonality, DEMO_REPLY, DEMO_QUIRKS } from './demo.mjs';
+import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS } from './demo.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -248,7 +248,7 @@ function startBackgroundRun({ id, cwd, prompt, persona, role }) {
   const finish = async (ok, result, cost) => {
     run.state = ok ? 'done' : 'failed'; run.endedAt = Date.now(); run.child = null;
     await fsp.mkdir(REPORTS_DIR, { recursive: true });
-    await fsp.writeFile(path.join(REPORTS_DIR, `${id}.json`), JSON.stringify({ role, name: persona?.name, ok, result, cost, startedAt: run.startedAt, endedAt: run.endedAt }, null, 2));
+    await writeJson(path.join(REPORTS_DIR, `${id}.json`), { role, name: persona?.name, ok, result, cost, startedAt: run.startedAt, endedAt: run.endedAt });
   };
   child.on('error', e => finish(false, `Could not start claude: ${e.message}`, 0));
   child.on('close', code => {
@@ -352,16 +352,47 @@ async function knownProjects() {
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([cwd]) => cwd);
 }
 
+// ---------- safe JSON storage ----------
+// All writes to a file go through one queue (no interleaved read-modify-write), are atomic
+// (temp file + rename), and keep a .bak of the last good version. An unreadable file is never
+// treated as empty: we fall back to the backup, and refuse to write rather than lose data.
+const queues = new Map();
+function exclusive(file, fn) {
+  const next = (queues.get(file) || Promise.resolve()).then(fn, fn);
+  queues.set(file, next.catch(() => {}));
+  return next;
+}
+async function readJson(file, fallback) {
+  let raw;
+  try { raw = await fsp.readFile(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return fallback; throw e; }
+  try { return JSON.parse(raw); } catch {}
+  try { return JSON.parse(await fsp.readFile(`${file}.bak`, 'utf8')); } catch {}
+  throw new Error(`${path.basename(file)} is unreadable; not touching it (a copy is in ${path.basename(file)}.bak if one exists)`);
+}
+async function writeJson(file, data) {
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  try { JSON.parse(await fsp.readFile(file, 'utf8')); await fsp.copyFile(file, `${file}.bak`); } catch {}
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tmp, JSON.stringify(data, null, 2));
+  await fsp.rename(tmp, file);
+}
+const updateJson = (file, fallback, change) => exclusive(file, async () => {
+  const data = await readJson(file, fallback);
+  const result = change(data);
+  await writeJson(file, data);
+  return result;
+});
+
 // ---------- session control ----------
 async function loadHidden() {
-  try { return JSON.parse(await fsp.readFile(HIDDEN_FILE, 'utf8')); } catch { return []; }
+  try { return await readJson(HIDDEN_FILE, []); } catch { return []; }
 }
-async function setHidden(id, hide) {
-  let h = await loadHidden();
-  h = hide ? [...new Set([...h, id])] : id ? h.filter(x => x !== id) : [];
-  await fsp.mkdir(path.dirname(HIDDEN_FILE), { recursive: true });
-  await fsp.writeFile(HIDDEN_FILE, JSON.stringify(h, null, 2));
-  return h;
+function setHidden(id, hide) {
+  return updateJson(HIDDEN_FILE, [], h => {
+    const next = hide ? [...new Set([...h, id])] : id ? h.filter(x => x !== id) : [];
+    h.splice(0, h.length, ...next);
+    return h;
+  });
 }
 
 const shq = v => `'${String(v).replace(/'/g, `'\\''`)}'`;
@@ -411,17 +442,21 @@ async function sessionDetail(id) {
 
 // ---------- personalities ----------
 async function loadPersonalities() {
-  try { return JSON.parse(await fsp.readFile(PERSONALITIES_FILE, 'utf8')); } catch { return {}; }
+  return readJson(PERSONALITIES_FILE, {});
 }
-async function savePersonality(id, p) {
-  const all = await loadPersonalities();
-  // { reset: true } forgets the personality, { replace: {...} } overwrites it (used by packs / undo)
+// { reset: true } forgets the personality, { replace: {...} } overwrites it (used by packs / undo)
+function applyPersonality(all, id, p) {
   if (p.reset) delete all[id];
   else if (p.replace) all[id] = p.replace;
   else all[id] = { ...all[id], ...p };
-  await fsp.mkdir(path.dirname(PERSONALITIES_FILE), { recursive: true });
-  await fsp.writeFile(PERSONALITIES_FILE, JSON.stringify(all, null, 2));
   return all[id] || {};
+}
+function savePersonality(id, p) {
+  return updateJson(PERSONALITIES_FILE, {}, all => applyPersonality(all, id, p));
+}
+// many at once in a single write: { id: change, ... }
+function savePersonalities(changes) {
+  return updateJson(PERSONALITIES_FILE, {}, all => Object.fromEntries(Object.entries(changes).map(([id, p]) => [id, applyPersonality(all, id, p)])));
 }
 
 // ---------- ask an agent (forks the session so the original is untouched) ----------
@@ -517,6 +552,7 @@ async function demoRoute(url, req, res) {
     const d = demoDetail(m[1], publicAchievements);
     return d ? json(res, 200, d) : json(res, 404, { error: 'not found' });
   }
+  if (url.pathname === '/api/personalities') return json(res, 200, demoSavePersonalities(await readBody(req)));
   if ((m = url.pathname.match(/^\/api\/personality\/([\w-]+)$/))) return json(res, 200, demoSavePersonality(m[1], await readBody(req)));
   if (url.pathname.startsWith('/api/ask/')) {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -552,6 +588,7 @@ const server = http.createServer(async (req, res) => {
       const d = await sessionDetail(m[1]);
       return d ? json(res, 200, d) : json(res, 404, { error: 'not found' });
     }
+    if (url.pathname === '/api/personalities' && req.method === 'POST') return json(res, 200, await savePersonalities(await readBody(req)));
     if ((m = url.pathname.match(/^\/api\/personality\/([\w-]+)$/)) && req.method === 'POST') {
       return json(res, 200, await savePersonality(m[1], await readBody(req)));
     }
