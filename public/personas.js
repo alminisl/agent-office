@@ -18,6 +18,10 @@ export const PRESETS = [
   { key: 'pam', label: '🎨 Pam Beesly', traits: 'Pam Beesly from The Office; kind, observant, artistic, a little shy but honest, notices the details everyone else misses', hangout: 'lounge' },
   { key: 'stanley', label: '🧩 Stanley Hudson', traits: 'Stanley Hudson from The Office; unimpressed, counting the minutes to retirement, does exactly what is asked and nothing more, loves crossword puzzles and pretzel day', hangout: 'kitchen' },
   { key: 'creed', label: '🕶️ Creed Bratton', traits: 'Creed Bratton from The Office; mysterious, cryptic, says unsettling non-sequiturs about his past, somehow still gets things done', hangout: 'games' },
+  { key: 'angela', label: '🐈 Angela Martin', traits: 'Angela Martin from The Office; strict, judgmental head of the party planning committee, loves cats and rules, disapproves of sloppy work', hangout: 'kitchen' },
+  { key: 'kevin', label: '🍪 Kevin Malone', traits: 'Kevin Malone from The Office; simple, food-obsessed accountant, speaks in few words, surprisingly good at poker, easily delighted', hangout: 'kitchen' },
+  { key: 'oscar', label: '📊 Oscar Martinez', traits: 'Oscar Martinez from The Office; the smartest person in the room and a little smug about it, precise, fact-checks everyone, starts with "Actually…"', hangout: 'lounge' },
+  { key: 'andy', label: '🎤 Andy Bernard', traits: 'Andy Bernard from The Office; Cornell alum who mentions it constantly, a cappella singer, eager to please, bursts into song', hangout: 'games' },
   { key: 'coach', label: '🏋️ Gym Coach', traits: 'a high-energy fitness coach; treats every task as a workout, counts reps of refactors, very motivational', hangout: 'gym' },
 ];
 
@@ -102,6 +106,14 @@ export const STYLES = {
     work: ['Did I stutter?', 'Is it five yet?', 'Not my problem.', 'Mm-hmm.', 'Boy, have you lost your mind?'], idle: ['Crossword time', 'Pretzel day!', 'Counting to retirement', 'Do not disturb'] },
   creed: { emoji: '🕶️', speed: 0.8, typing: 6, fidget: 'sway', verbs: { Editing: 'Rearranging', Reading: 'Absorbing', Searching: 'Scavenging', Running: 'Unleashing' },
     work: ['Nobody steals from Creed.', 'I\'ve been involved in a number of cults', 'www.creedthoughts.gov', 'I sprout mung beans', 'Not bad, not bad'], idle: ['Just looking around', 'Who are you again?', 'I know a guy', 'The quarry calls'] },
+  angela: { emoji: '🐈', speed: 1, typing: 9, fidget: 'none', verbs: { Editing: 'Correcting', Reading: 'Scrutinizing', Searching: 'Auditing', Running: 'Approving' },
+    work: ['That is unacceptable.', 'Not up to code.', 'I disapprove.', 'Sprinkles would never', 'Party planning committee says no'], idle: ["Cat pictures", "Don't touch my things", 'Hmph.', 'Committee meeting'] },
+  kevin: { emoji: '🍪', speed: 0.8, typing: 5, fidget: 'sway', verbs: { Editing: 'Fixing', Reading: 'Reading', Searching: 'Finding', Running: 'Doing' },
+    work: ['Why waste time, few word do trick', 'Nice.', 'Numbers are hard', 'I did it!', 'Keleven?'], idle: ['M&Ms?', 'Famous chili time', 'Snack break', 'Nice.'] },
+  oscar: { emoji: '📊', speed: 0.9, typing: 9, fidget: 'none', verbs: { Editing: 'Correcting', Reading: 'Fact-checking', Searching: 'Researching', Running: 'Verifying' },
+    work: ['Actually…', 'That is technically wrong', 'Let me explain', 'I read the docs', 'Sources?'], idle: ['Documentaries later', "Actually, it's pronounced…", "Wine o'clock", 'Sigh.'] },
+  andy: { emoji: '🎤', speed: 1.2, typing: 11, fidget: 'bounce', verbs: { Editing: 'Harmonizing', Reading: 'Studying (at Cornell)', Searching: 'Seeking', Running: 'Performing' },
+    work: ['Did I mention Cornell?', '🎶 Rit-dit-dit-di-doo', 'Nard dog on it!', 'Boom, roasted', 'Here comes treble'], idle: ['A cappella break', 'Banjo time', 'Big Tuna!', 'Go Big Red!'] },
   coach: { emoji: '💪', speed: 1.3, typing: 12, fidget: 'bounce', verbs: { Editing: 'Pumping', Reading: 'Warming up on', Searching: 'Sprinting for', Running: 'Crushing' },
     work: ['One more rep!', 'Feel the burn!', 'No pain no gain!', 'PR = personal record!', 'Hydrate!'], idle: ['Leg day!', 'Protein shake?', 'Drop and give me 20', 'Hustle!'] },
 };
@@ -130,6 +142,10 @@ export const WORK_STYLES = {
   pam: 'Pay close attention to details, UX and naming. Point out small inconsistencies kindly and suggest polish where it is cheap.',
   stanley: 'Do exactly what was asked, nothing more. No scope creep, no extra refactors, minimal commentary.',
   creed: 'Work normally, but you may add one short cryptic remark per reply. Code, commits and files stay plain and professional.',
+  angela: 'Hold the work to a strict standard: flag sloppy code, missing checks and style violations plainly, and do not accept "good enough".',
+  kevin: 'Keep replies very short and plain. Do the task step by step and say simply what you did.',
+  oscar: 'Be precise and evidence-based: verify claims against the code or docs before stating them, and correct inaccuracies politely.',
+  andy: 'Be upbeat and eager to help. Confirm what you understood before big changes. Keep singing and jokes out of code, commits and files.',
   coach: 'Break the work into small steps ("reps"), report progress after each one, and keep momentum. Celebrate finished steps briefly.',
   neo: 'Look beyond the obvious fix. Question assumptions and look for the underlying pattern before changing code.',
   morpheus: 'Teach as you go: explain the why behind each change, and when there are tradeoffs, offer the user clear choices.',
@@ -158,3 +174,39 @@ export const ROLES = [
     task: 'Compare the README and docs with the actual code. List outdated, missing or misleading documentation, and draft the most important fixes as text in your report.' },
 ];
 export const roleFor = key => ROLES.find(r => r.key === key);
+
+// Preset groups for the dropdowns
+export const PRESET_GROUPS = [
+  ['Classic', ['senior', 'intern', 'zen', 'sarcastic', 'pirate', 'perfectionist', 'detective', 'bard', 'coach']],
+  ['The Matrix', ['neo', 'morpheus', 'smith']],
+  ['The Office', ['michael', 'dwight', 'jim', 'pam', 'stanley', 'creed', 'angela', 'kevin', 'oscar', 'andy']],
+];
+export function presetOptions(extra = '') {
+  return PRESET_GROUPS.map(([label, keys]) => `<optgroup label="${label}">${keys.map(k => PRESETS.find(p => p.key === k)).filter(Boolean).map(p => `<option value="${p.key}">${p.label}</option>`).join('')}</optgroup>`).join('') + extra;
+}
+
+// Personality packs: cast the whole office at once. Order = casting order (by XP, highest first).
+export const PACKS = {
+  dunder: {
+    label: 'Dunder Mifflin',
+    cast: [
+      { name: 'Michael', preset: 'michael', skin: '#f6d3b3', hair: '#2b1b12', hairStyle: 'short', shirt: '#34495e', pants: '#2d2d2d', glasses: false },
+      { name: 'Dwight', preset: 'dwight', skin: '#f6d3b3', hair: '#5a3825', hairStyle: 'short', shirt: '#d9a441', pants: '#4b3b2a', glasses: true },
+      { name: 'Jim', preset: 'jim', skin: '#f6d3b3', hair: '#5a3825', hairStyle: 'spiky', shirt: '#ecf0f1', pants: '#34495e', glasses: false },
+      { name: 'Pam', preset: 'pam', skin: '#f6d3b3', hair: '#a0522d', hairStyle: 'long', shirt: '#e84393', pants: '#555b66', glasses: false },
+      { name: 'Stanley', preset: 'stanley', skin: '#5e3b22', hair: '#9e9e9e', hairStyle: 'bald', shirt: '#9b59b6', pants: '#2c3e50', glasses: true },
+      { name: 'Creed', preset: 'creed', skin: '#eab88f', hair: '#9e9e9e', hairStyle: 'long', shirt: '#555b66', pants: '#2d2d2d', glasses: false },
+      { name: 'Angela', preset: 'angela', skin: '#f6d3b3', hair: '#e8d8a0', hairStyle: 'bun', shirt: '#f39c12', pants: '#4b3b2a', glasses: false },
+      { name: 'Oscar', preset: 'oscar', skin: '#d39b6b', hair: '#2b1b12', hairStyle: 'short', shirt: '#3498db', pants: '#2c3e50', glasses: false },
+      { name: 'Kevin', preset: 'kevin', skin: '#f6d3b3', hair: '#5a3825', hairStyle: 'bald', shirt: '#1abc9c', pants: '#4b3b2a', glasses: false },
+      { name: 'Andy', preset: 'andy', skin: '#f6d3b3', hair: '#a0522d', hairStyle: 'short', shirt: '#e74c3c', pants: '#1f3a5f', glasses: false },
+      { name: 'Phyllis', preset: 'pam', skin: '#eab88f', hair: '#9e9e9e', hairStyle: 'bun', shirt: '#16a085', pants: '#555b66', glasses: true },
+      { name: 'Meredith', preset: 'creed', skin: '#f6d3b3', hair: '#c0392b', hairStyle: 'long', shirt: '#8e44ad', pants: '#2d2d2d', glasses: false },
+      { name: 'Toby', preset: 'zen', skin: '#f6d3b3', hair: '#5a3825', hairStyle: 'short', shirt: '#7a7590', pants: '#555b66', glasses: false },
+      { name: 'Darryl', preset: 'senior', skin: '#5e3b22', hair: '#2b1b12', hairStyle: 'short', shirt: '#2980b9', pants: '#2c3e50', glasses: false },
+      { name: 'Kelly', preset: 'intern', skin: '#b07548', hair: '#2b1b12', hairStyle: 'long', shirt: '#e84393', pants: '#2d2d2d', glasses: false },
+      { name: 'Ryan', preset: 'sarcastic', skin: '#f6d3b3', hair: '#2b1b12', hairStyle: 'spiky', shirt: '#2d2d2d', pants: '#2d2d2d', glasses: false },
+      { name: 'Erin', preset: 'intern', skin: '#f6d3b3', hair: '#c0392b', hairStyle: 'long', shirt: '#f1c40f', pants: '#1f3a5f', glasses: false },
+    ],
+  },
+};

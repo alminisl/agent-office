@@ -169,3 +169,8 @@ body.matrix h1, body.matrix #stats { color: #00ff66; text-shadow: 0 0 6px #00ff6
 .ask-mode { display: flex; flex-direction: column; gap: 4px; background: var(--panel-2); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
 .ask-mode label { display: flex; gap: 6px; align-items: baseline; font-size: 13px; cursor: pointer; }
 .ask-mode input { width: auto; }
+
+.pack { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.pack p { margin: 0; }
+
+.doing { font-size: 13px; font-weight: 600; color: var(--text); margin-top: 2px; }

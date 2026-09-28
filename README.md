@@ -12,6 +12,7 @@ It is a single zero-dependency Node server plus a canvas front end. Every sprite
 
 ### Office
 - Every recent Claude Code session gets its own cubicle, grouped by project (the coloured stripe on a nameplate marks the project).
+- Every nameplate shows a live **status line** saying what the agent is doing right now: "⌨️ Working: Editing Cart.tsx", "🙋 Needs you: approve npm test", "☕ Coffee break", "🏓 Playing ping pong", "👀 Checking on Pam", "🌴 Out of office" and so on.
 - A kitchen, gym, game room and lounge where agents spend their breaks.
 - Agents arrive and leave through the elevator.
 - Zoom in and out, or fit the whole office to the window.
@@ -32,7 +33,8 @@ Live status comes from `~/.claude/sessions`:
 - A context bar under every nameplate shows context window usage. Above 80% the agent starts sweating and mutters "maybe /compact?".
 
 ### Personalities
-- Presets such as Grizzled Senior, Hype Intern, Zen Monk, Sarcastic Wit, Pirate Captain, Nervous Perfectionist, Noir Detective, Shakespearean Bard, Gym Coach, Neo, Morpheus and Agent Smith, plus the Dunder Mifflin crew: Michael Scott, Dwight Schrute, Jim Halpert, Pam Beesly, Stanley Hudson and Creed Bratton.
+- Presets such as Grizzled Senior, Hype Intern, Zen Monk, Sarcastic Wit, Pirate Captain, Nervous Perfectionist, Noir Detective, Shakespearean Bard, Gym Coach, Neo, Morpheus and Agent Smith, plus the Dunder Mifflin crew: Michael Scott, Dwight Schrute, Jim Halpert, Pam Beesly, Stanley Hudson, Creed Bratton, Angela Martin, Kevin Malone, Oscar Martinez and Andy Bernard.
+- **Personality packs** (Dashboard → Settings): *Staff the office with Dunder Mifflin* casts everyone at once with names, personalities and matching looks. Casting goes by XP, so your top agent becomes Michael, with the corner office. It leaves personalities you customised alone unless you ask it to replace them, and *Back to default personalities* undoes it.
 - A personality changes how an agent types, fidgets, walks, talks and where they hang out.
 - Customise name, traits, favourite hangout and look (skin, hair, clothes, hair style, glasses), or let Claude generate quirks for them.
 - **Bring this personality to work**: when you start or resume a session from the office, the personality's work style is passed to Claude via `--append-system-prompt` (a Perfectionist tests everything, a Detective finds the root cause first, a Senior keeps diffs minimal).

@@ -92,8 +92,10 @@ export function demoDetail(sid, achievements) {
 }
 
 export function demoSavePersonality(sid, p) {
-  personalities[sid] = { ...personalities[sid], ...p };
-  return personalities[sid];
+  if (p.reset) delete personalities[sid];
+  else if (p.replace) personalities[sid] = p.replace;
+  else personalities[sid] = { ...personalities[sid], ...p };
+  return personalities[sid] || {};
 }
 
 export const DEMO_REPLY = "Honestly? It's going well. The tricky part was the edge cases around empty carts, and those are covered by tests now. I'd like one more pass on error messages before we ship. Want me to open the PR after that?";

@@ -415,10 +415,13 @@ async function loadPersonalities() {
 }
 async function savePersonality(id, p) {
   const all = await loadPersonalities();
-  all[id] = { ...all[id], ...p };
+  // { reset: true } forgets the personality, { replace: {...} } overwrites it (used by packs / undo)
+  if (p.reset) delete all[id];
+  else if (p.replace) all[id] = p.replace;
+  else all[id] = { ...all[id], ...p };
   await fsp.mkdir(path.dirname(PERSONALITIES_FILE), { recursive: true });
   await fsp.writeFile(PERSONALITIES_FILE, JSON.stringify(all, null, 2));
-  return all[id];
+  return all[id] || {};
 }
 
 // ---------- ask an agent (forks the session so the original is untouched) ----------

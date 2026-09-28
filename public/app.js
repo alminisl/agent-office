@@ -1,6 +1,6 @@
 import { T, characterFrame, helperFrame, critterFrame, drawFloor, drawWall, FURNITURE } from './sprites.js';
 import { buildWorld, findPath, projectColor, EXEC_LEVEL } from './world.js';
-import { PRESETS, SKINS, HAIRS, SHIRTS, PANTS, HAIR_STYLES, personaFor, styleFor, assignUniqueNames, workStyleFor, ROLES, roleFor } from './personas.js';
+import { PRESETS, SKINS, HAIRS, SHIRTS, PANTS, HAIR_STYLES, personaFor, styleFor, assignUniqueNames, workStyleFor, ROLES, roleFor, PACKS, presetOptions } from './personas.js';
 
 const $ = s => document.querySelector(s);
 const canvas = $('#office');
@@ -105,6 +105,16 @@ function rebuild() {
 }
 
 // ---------------- agents ----------------
+function spotLabel(sp) {
+  const b = sp.bubble || '';
+  if (sp.zone === 'kitchen') return b === '☕' ? '☕ Coffee break' : b === '💧' ? '💧 At the water cooler' : b === '🥪' ? '🥪 Grabbing a snack' : '🍩 Lunch break';
+  if (sp.zone === 'gym') return { run: '🏃 On the treadmill', lift: '🏋️ Lifting weights', stretch: '🧘 Yoga', punch: '🥊 Boxing' }[sp.pose] || '💪 Working out';
+  if (sp.zone === 'games') return sp.pose === 'paddle' ? '🏓 Playing ping pong' : b === '⚽' ? '⚽ Foosball' : sp.pose === 'sit' ? '📱 Beanbag break' : '🕹️ Playing arcade';
+  if (sp.zone === 'lounge') return b === '📖' ? '📖 Reading' : b === '🎧' ? '🎧 Music break' : b === '📺' ? '📺 Watching TV' : sp.id.startsWith('lounge-') ? '📱 Relaxing in the office' : '🛋️ Lounging';
+  if (sp.zone === 'office') return '🖨️ At the printer';
+  return '☕ On a break';
+}
+
 class Agent {
   constructor(session) {
     this.id = session.id;
@@ -287,6 +297,33 @@ class Agent {
     if (this.task === 'chat' && this.chatWith) return choice(['💬', '😂', '🤔', '👀', '🙌']);
     if (this.spot?.zone === 'kitchen' && Math.random() < 0.08) return choice(['🔴💊', '🔵💊']);
     return this.spot?.bubble || (this.spot?.zone === 'desk' ? choice(['🤔', '📝', this.style.emoji]) : null);
+  }
+
+  // Short human-readable "what are they doing" line for nameplates and the panel.
+  statusText() {
+    const s = this.session;
+    if (this.away) return '🌴 Out of office';
+    if (this.leaving) return '👋 Heading home';
+    if (this.thinking) return '💭 Answering your question';
+    const walking = this.path.length > 0;
+    if (walking && this.task === 'desk') return this.working ? '🏃 Rushing back to work' : '🚶 Heading to desk';
+    if (walking && this.task === 'chat') return `🚶 Going to chat with ${this.chatWith?.persona.name || 'someone'}`;
+    if (walking && this.task === 'wander') return '🚶 Stretching legs';
+    if (walking && this.spot) {
+      const where = spotLabel(this.spot);
+      return where.includes('On a break') ? '🚶 Off for a break' : `🚶 On the way: ${where.replace(/^\S+\s/, '').toLowerCase()}`;
+    }
+    if (s.status === 'busy') return !s.activity || s.activity === 'Talking' ? '✍️ Writing a reply' : `⌨️ Working: ${this.styledActivity(s.activity)}`;
+    if (s.status === 'waiting') return `🙋 Needs you: ${s.waitingFor || 'input'}`;
+    if (isYourTurn(s)) return s.runState === 'done' ? '📋 Report ready' : '💬 Waiting for your reply';
+    if (this.task === 'chat' && this.chatWith) return `💬 Chatting with ${this.chatWith.persona.name}`;
+    if (this.spot?.zone === 'visit') {
+      const host = [...agents.values()].find(a => a.room?.visit === this.spot);
+      return `👀 Checking on ${host?.persona.name || 'a colleague'}`;
+    }
+    if (this.spot?.zone === 'desk') return '🪑 At desk, idle';
+    if (this.spot) return spotLabel(this.spot);
+    return '🚶 Wandering around';
   }
 
   styledActivity(label) {
@@ -628,7 +665,7 @@ function drawOverlay(s) {
   // cubicle nameplates on the front panel: status, name, project, level, title, context bar
   for (const room of world.rooms) {
     const ss = room.session, a = agents.get(ss.id);
-    const h = fs * 2 + 13 * dpr;
+    const h = fs * 3 + 16 * dpr;
     const x = room.plaque.x * T * s, y = room.plaque.y * T * s;
     const w = room.plaque.w * T * s;
     const sel = ss.id === selectedId, hov = ss.id === hoverId;
@@ -653,9 +690,13 @@ function drawOverlay(s) {
     const nm = `${icon ? `${icon} ` : ''}${a?.persona.name || ''}`;
     const who = room.kind === 'office' ? `${nm} · ${ss.rank || ''}` : nm;
     ctx.fillText(fit(who, w - 32 * dpr - lw), x + 19 * dpr, y + 5 * dpr + fs / 2);
-    ctx.font = `${Math.round(fs * 0.9)}px Inter, sans-serif`;
-    ctx.fillStyle = 'rgba(255,255,255,0.72)';
-    ctx.fillText(fit(a?.away ? `🌴 Out of office · ${ss.title}` : ss.title, w - 14 * dpr), x + 8 * dpr, y + h - 8 * dpr - fs / 2);
+    // status line: what they are doing right now
+    ctx.font = `600 ${Math.round(fs * 0.88)}px Inter, sans-serif`;
+    ctx.fillStyle = STATUS_COLOR[displayStatus(ss)] || '#ccc';
+    ctx.fillText(fit(a ? a.statusText() : '', w - 14 * dpr), x + 8 * dpr, y + 8 * dpr + fs * 1.45);
+    ctx.font = `${Math.round(fs * 0.85)}px Inter, sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText(fit(ss.title, w - 14 * dpr), x + 8 * dpr, y + h - 8 * dpr - fs * 0.42);
     // context gauge
     const pct = Math.min(1, (ss.context || 0) / (ss.contextWindow || 1));
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
@@ -715,6 +756,10 @@ function fit(text, maxW) {
 let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now; time += dt;
+  if (selectedId && Math.floor(time * 2) !== Math.floor((time - dt) * 2)) { // refresh the panel's status line twice a second
+    const a = agents.get(selectedId);
+    if (a) $('#pDoing').textContent = `Status: ${a.statusText()}`;
+  }
   if (world) { for (const a of agents.values()) a.update(dt); for (const h of helpers.values()) h.update(dt); updateEffects(dt); updateMatrix(dt); updateCritters(dt); render(); }
   requestAnimationFrame(loop);
 }
@@ -731,7 +776,7 @@ function agentAt(evt) {
   }
   if (hit) return hit;
   // clicking a nameplate selects that cubicle's agent
-  const room = world.rooms.find(r => wy >= r.plaque.y && wy <= r.plaque.y + 0.95 && wx >= r.plaque.x && wx <= r.plaque.x + r.plaque.w);
+  const room = world.rooms.find(r => wy >= r.plaque.y && wy <= r.plaque.y + 1.35 && wx >= r.plaque.x && wx <= r.plaque.x + r.plaque.w);
   return room ? agents.get(room.session.id) : null;
 }
 
@@ -817,6 +862,7 @@ function updatePanelHeader() {
   const role = roleFor(p.role);
   $('#pPreset').textContent = `${PRESETS.find(x => x.key === p.preset)?.label || 'Custom personality'}${role ? ` · ${role.icon} ${role.label}` : ''}${s.background ? ' · working in the office' : ''}`;
   $('#pTitle').textContent = s.title;
+  $('#pDoing').textContent = `Status: ${a.statusText()}`;
   $('#pMeta').textContent = `${s.project}${s.gitBranch ? ` · ${s.gitBranch}` : ''} · ${ago(s.updatedAt)}`;
   $('#cmdText').textContent = resumeCmd(s);
   const av = $('#avatar').getContext('2d');
@@ -940,7 +986,7 @@ $('#askForm').onsubmit = e => { e.preventDefault(); const q = $('#askInput').val
 document.querySelectorAll('.quick button').forEach(b => b.onclick = () => ask(b.dataset.q));
 
 // personality
-$('#presetSelect').innerHTML = PRESETS.map(p => `<option value="${p.key}">${p.label}</option>`).join('') + '<option value="custom">✏️ Custom</option>';
+$('#presetSelect').innerHTML = presetOptions('<option value="custom">✏️ Custom</option>');
 const PALETTES = { skin: SKINS, hair: HAIRS, shirt: SHIRTS, pants: PANTS };
 let draft = null;
 
@@ -1161,6 +1207,41 @@ $('#setUnhide').onclick = async () => { await post('/api/hide/', { hide: false }
 $('#setFit').onclick = () => setZoom(0);
 $('#setHelp').onclick = () => { $('#board').hidden = true; openHelp(); };
 
+// personality packs: cast everyone at once, highest XP first; undo restores what was there before
+async function applyPack(key) {
+  const pack = PACKS[key], replaceCustom = $('#packReplace').checked;
+  const list = [...allSessions].sort((a, b) => (b.xp || 0) - (a.xp || 0));
+  let i = 0, cast = 0;
+  const jobs = [];
+  for (const s of list) {
+    const mine = s.personality && !s.personality.pack;
+    if (mine && !replaceCustom) continue;
+    const c = pack.cast[i % pack.cast.length];
+    const round = Math.floor(i / pack.cast.length);
+    const preset = PRESETS.find(p => p.key === c.preset);
+    const before = s.personality?.pack ? s.personality.before ?? null : s.personality || null;
+    const p = { ...c, name: round ? `${c.name} ${['', 'II', 'III', 'IV'][round] || round + 1}` : c.name,
+      traits: preset.traits, hangout: preset.hangout, impact: s.personality?.impact ?? true, role: s.personality?.role || null, pack: key, before };
+    p.workStyle = p.impact !== false ? workStyleFor(p) : '';
+    jobs.push(post(`/api/personality/${s.id}`, { replace: p }));
+    i++; cast++;
+  }
+  await Promise.all(jobs);
+  toast(cast ? `📎 ${cast} agents now work for <b>${pack.label}</b>. Welcome to Scranton.` : 'Everyone already has a personality you customised. Tick "Also replace…" to recast them.');
+  for (const a of agents.values()) a.draftPersona = null;
+  await refresh();
+  if (selectedId) fillPersonaForm();
+}
+async function resetPack() {
+  const packed = allSessions.filter(s => s.personality?.pack);
+  await Promise.all(packed.map(s => post(`/api/personality/${s.id}`, s.personality.before ? { replace: s.personality.before } : { reset: true })));
+  toast(packed.length ? `↩️ ${packed.length} agents are back to their own personalities.` : 'No pack is active.');
+  await refresh();
+  if (selectedId) fillPersonaForm();
+}
+$('#packDunder').onclick = () => applyPack('dunder');
+$('#packReset').onclick = resetPack;
+
 // personality quirks generated by Claude
 function renderWorkStyle() {
   const ws = draft && draft.impact !== false ? workStyleFor(draft) : '';
@@ -1222,7 +1303,7 @@ async function hideSelected() {
 $('#hideBtn').onclick = hideSelected;
 
 // new session
-$('#newPreset').innerHTML = PRESETS.map(p => `<option value="${p.key}">${p.label}</option>`).join('');
+$('#newPreset').innerHTML = presetOptions();
 $('#newRole').innerHTML = '<option value="">👤 General agent (no role)</option>' + ROLES.map(r => `<option value="${r.key}">${r.icon} ${r.label}</option>`).join('');
 function syncNewForm() {
   const f = $('#newForm');
