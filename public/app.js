@@ -516,12 +516,22 @@ document.addEventListener('keydown', e => {
   konami = e.key === KONAMI[konami] ? konami + 1 : e.key === KONAMI[0] ? 1 : 0;
   if (konami === KONAMI.length) { konami = 0; setMatrix(!matrix.on); }
   if (e.key.length !== 1) return;
-  typed = (typed + e.key.toLowerCase()).slice(-12);
+  typed = (typed + e.key.toLowerCase()).slice(-20);
   if (/(matrix|redpill|neo)$/.test(typed)) { typed = ''; setMatrix(true); }
   else if (/bluepill$/.test(typed)) { typed = ''; setMatrix(false); }
   else if (/whiterabbit$/.test(typed)) { typed = ''; spawnCritter('rabbit'); }
   else if (/dejavu$/.test(typed)) { typed = ''; spawnCritter('cat'); }
+  else if (/dundermifflin$/.test(typed)) { typed = ''; dunderMifflin(); }
 });
+// Dunder Mifflin, Scranton branch (for a minute)
+function dunderMifflin() {
+  const h1 = document.querySelector('h1'), was = h1.textContent;
+  h1.textContent = 'Dunder Mifflin · Scranton';
+  const lines = ["That's what she said!", 'Bears. Beets. Battlestar Galactica.', 'Is it pretzel day?', '👀', 'Nobody steals from Creed.', 'I declare bankruptcy!'];
+  for (const a of agents.values()) if (!a.away) { a.quip = choice(lines); a.quipT = -4; a.celebrateT = 2; }
+  toast('📎 <b>Dunder Mifflin</b>: limitless paper in a paperless world.');
+  setTimeout(() => { h1.textContent = was; }, 60000);
+}
 console.log('%cWake up, Neo…', 'color:#00ff66;background:#000;font:16px monospace;padding:6px 10px');
 console.log('%cThe Matrix has you. Follow the white rabbit. (try typing "matrix" on the office)', 'color:#00ff66;background:#000;font:12px monospace;padding:4px 10px');
 
@@ -1001,7 +1011,7 @@ $('#showOffline').onchange = e => setShowOffline(e.target.checked);
 
 // ---------------- office dashboard ----------------
 // Motivation is a playful read of the agent's state: busy = in the zone, full context = burned out, etc.
-const EAGER = new Set(['intern', 'coach', 'neo']), GRUMPY = new Set(['senior', 'sarcastic', 'smith']);
+const EAGER = new Set(['intern', 'coach', 'neo', 'michael', 'dwight']), GRUMPY = new Set(['senior', 'sarcastic', 'smith', 'stanley']);
 function motivation(s) {
   const p = personaFor(s), pct = (s.context || 0) / (s.contextWindow || 1);
   const bonus = EAGER.has(p.preset) ? 8 : GRUMPY.has(p.preset) ? -8 : 0;

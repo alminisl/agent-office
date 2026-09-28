@@ -32,7 +32,7 @@ Live status comes from `~/.claude/sessions`:
 - A context bar under every nameplate shows context window usage. Above 80% the agent starts sweating and mutters "maybe /compact?".
 
 ### Personalities
-- Presets such as Grizzled Senior, Hype Intern, Zen Monk, Sarcastic Wit, Pirate Captain, Nervous Perfectionist, Noir Detective, Shakespearean Bard, Gym Coach, Neo, Morpheus and Agent Smith.
+- Presets such as Grizzled Senior, Hype Intern, Zen Monk, Sarcastic Wit, Pirate Captain, Nervous Perfectionist, Noir Detective, Shakespearean Bard, Gym Coach, Neo, Morpheus and Agent Smith, plus the Dunder Mifflin crew: Michael Scott, Dwight Schrute, Jim Halpert, Pam Beesly, Stanley Hudson and Creed Bratton.
 - A personality changes how an agent types, fidgets, walks, talks and where they hang out.
 - Customise name, traits, favourite hangout and look (skin, hair, clothes, hair style, glasses), or let Claude generate quirks for them.
 - **Bring this personality to work**: when you start or resume a session from the office, the personality's work style is passed to Claude via `--append-system-prompt` (a Perfectionist tests everything, a Detective finds the root cause first, a Senior keeps diffs minimal).
@@ -59,6 +59,7 @@ Press <kbd>D</kbd> for the office dashboard:
 
 ### Easter eggs
 - Type `matrix` (or click the white rabbit that sometimes hops by) for digital rain and trench coats; type `bluepill` to leave. The Konami code works too.
+- Type `dundermifflin` and the office becomes the Scranton branch for a minute.
 - A black cat walks by twice. Déjà vu.
 - Agent Smith occasionally copies himself onto a coworker.
 
