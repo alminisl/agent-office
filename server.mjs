@@ -459,7 +459,7 @@ function askAgent(detail, question, mode, persona, res) {
   const args = deep
     ? ['-p', prompt, '--resume', detail.id, '--fork-session', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream]
     : ['-p', prompt, '--model', process.env.ASK_MODEL || 'haiku', '--no-session-persistence', '--tools', '', '--append-system-prompt', system, ...stream];
-  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd: deep ? detail.cwd || os.homedir() : os.tmpdir(), env: process.env });
+  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, { cwd: deep ? detail.cwd || os.homedir() : os.tmpdir(), env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' });
 
   let wrote = false, buf = '', err = '';
@@ -493,7 +493,7 @@ Reply with ONLY a JSON object, no prose, no code fences:
  "verbs": {"Editing": "...", "Reading": "...", "Searching": "...", "Running": "..."} (in-character replacements for these activity verbs, one or two words each),
  "emoji": "one emoji that represents them"}`;
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', '--model', 'haiku', '--no-session-persistence', '--tools', '', '--output-format', 'text', prompt], { cwd: os.tmpdir() });
+    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, '--model', 'haiku', '--no-session-persistence', '--tools', '', '--output-format', 'text'], { cwd: os.tmpdir(), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { err += d; });
