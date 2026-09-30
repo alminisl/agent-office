@@ -13,12 +13,13 @@
     <h1>Agent Office</h1>
     <div id="stats" data-tip="How many agents are busy, waiting for permission, waiting for your reply, idle, or out of office."></div>
     <div class="spacer"></div>
-    <label class="toggle" data-tip="Show cubicles of sessions that are not running (out of office). Shortcut: S"><input type="checkbox" id="showOffline"> Show offline</label>
-    <button id="todoBtn" data-tip="The office TODO board: what still needs doing, what's in progress and what's done. Shortcut: B">📋 Board</button>
-    <button id="standupBtn" data-tip="Daily standup: everyone walks to the meeting room and you get yesterday, today and blockers for everyone who worked today. Shortcut: M">🧍 Standup</button>
-    <button id="replayBtn" data-tip="Replay the last 24 hours and watch who was working when. Shortcut: T">⏱️ Replay</button>
-    <button id="boardBtn" data-tip="Office dashboard: overview, employees, leaderboard and settings. Shortcut: D">🏢 Dashboard</button>
-    <button id="newBtn" class="primary" data-tip="Hire a new agent: start a Claude Code session in a project, with a role and personality. Shortcut: N">＋ New session</button>
+    <label class="toggle" data-tip="Show cubicles of sessions that are not running (out of office). Shortcut: S"><input type="checkbox" id="showOffline"> <span class="lbl">Show offline</span></label>
+ <button id="prBtn" data-tip="Your open PRs and MRs, the ones waiting for your review, and all-hands reviews. Shortcut: P">🔀<span class="lbl"> PRs</span> <span id="prCount" class="count-badge" hidden></span></button>
+    <button id="todoBtn" data-tip="The office TODO board: what still needs doing, what's in progress and what's done. Shortcut: B">📋<span class="lbl"> Board</span></button>
+    <button id="standupBtn" data-tip="Daily standup: everyone walks to the meeting room and you get yesterday, today and blockers for everyone who worked today. Shortcut: M">🧍<span class="lbl"> Standup</span></button>
+    <button id="replayBtn" data-tip="Replay the last 24 hours and watch who was working when. Shortcut: T">⏱️<span class="lbl"> Replay</span></button>
+    <button id="boardBtn" data-tip="Office dashboard: overview, employees, leaderboard and settings. Shortcut: D">🏢<span class="lbl"> Dashboard</span></button>
+    <button id="newBtn" class="primary" data-tip="Hire a new agent: start a Claude Code session in a project, with a role and personality. Shortcut: N">＋<span class="lbl"> New session</span></button>
     <button id="helpBtn" data-tip="How the office works, and all keyboard shortcuts. Shortcut: ?">?</button>
     <div class="zoom">
       <button id="zoomOut" data-tip="Zoom out (−)">−</button>
@@ -264,6 +265,7 @@
             <li><kbd>?</kbd> this help</li>
             <li><kbd>N</kbd> hire a new agent (new session)</li>
             <li><kbd>B</kbd> the office TODO board</li>
+            <li><kbd>P</kbd> PRs &amp; MRs, and all-hands reviews</li>
             <li><kbd>M</kbd> daily standup in the meeting room</li>
             <li><kbd>T</kbd> replay the last 24 hours (<kbd>Space</kbd> play / pause)</li>
             <li><kbd>D</kbd> office dashboard (costs, employees, leaderboard, settings)</li>
@@ -313,6 +315,33 @@
       <label class="inline"><input type="checkbox" name="trash"> Also move their Claude Code transcript to the Trash <span class="muted small">(the session can't be resumed afterwards; you can restore it from the Trash)</span></label>
       <div class="row"><button type="submit" class="danger primary">Delete agent</button><button type="button" class="ghost" data-close>Cancel</button></div>
     </form>
+  </div>
+
+  <div id="prModal" class="modal" hidden>
+    <div class="card prs">
+      <div class="board-head">
+        <h2>🔀 PRs &amp; MRs</h2>
+        <span id="prMeta" class="muted small"></span>
+        <button id="prRefresh" class="small" data-tip="Ask GitLab / GitHub again (otherwise refreshed every 3 minutes)">↻ Refresh</button>
+        <button class="icon" data-close title="Close (Esc)">✕</button>
+      </div>
+      <nav class="tabs" id="prTabs">
+        <button data-pr="review" class="active" data-tip="PRs/MRs where you are a requested reviewer">Waiting for my review <span></span></button>
+        <button data-pr="mine" data-tip="PRs/MRs you opened">Mine <span></span></button>
+        <button data-pr="team" data-tip="The most recently created open PRs/MRs in your repos (15 per repo)">Team <span></span></button>
+      </nav>
+      <div id="prList" class="pr-list"></div>
+      <div class="allhands">
+        <div class="ah-row">
+          <b>🚨 All hands review</b>
+          <span id="ahSel" class="muted small"></span>
+          <label data-tip="Which of your review skills the reviewers use">Skill <select id="ahSkill"><option value="review-mr-light">review-mr-light (fast)</option><option value="review-mr">review-mr (deep PM report)</option></select></label>
+          <label class="toggle" data-tip="Two reviewers review each PR independently, then their reports are compared: what both found, what only one found, disagreements, and a verdict."><input type="checkbox" id="ahCross" checked> Cross-check (2 reviewers each)</label>
+          <button id="ahStart" class="primary">🚨 Start</button>
+        </div>
+        <p id="ahNote" class="muted small"></p>
+      </div>
+    </div>
   </div>
 
   <div id="handoffModal" class="modal" hidden>

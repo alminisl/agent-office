@@ -61,6 +61,11 @@ Live status comes from `~/.claude/sessions`:
   - **🖥️ Start a PM session** opens a real Claude session as the PM, which can manage the office through the agent-office tools (read the office, update the board, hire agents).
 - **📋 Office board** (<kbd>B</kbd>, or click the sticky-note board on the meeting-room wall): To do / In progress / Done. Add cards, drag them between columns, and **🤝 Give** a card to an agent or **🏢 Hire** someone for it. Cards move to *In progress* on their own, and background agents move them to *Done* when they finish. Agents can read the board, add cards and tick them off themselves (with the office tools connected, see below): background agents always can, and sessions started from the office are told to use it. The standup reports board progress.
 
+### PRs & MRs, and all-hands reviews
+- **🔀 PRs** (<kbd>P</kbd>): the office finds the repos your sessions work in and lists **your open PRs/MRs**, the ones **waiting for your review**, and the latest team ones, using your existing `glab` (GitLab) and `gh` (GitHub) logins. It refreshes every 3 minutes, shows drafts, conflicts, merge status and comments, and links each PR to the agent working on its branch (🔀 on their nameplate).
+- **🚨 All hands review**: tick the PRs/MRs, pick your review skill (`review-mr-light` or `review-mr`), and everyone gathers in the meeting room before reviewer agents get to work. With **cross-check**, two reviewers review each change independently, then their reports are compared: what both found, what only one found, disagreements, and a verdict. You see a rough cost estimate first, at most 4 reviewers run at once, and each PR gets a card on the board.
+- Reviewers are **read-only**: they can use the skill, read the PR and the code, and run sub-agents, but they can't comment, approve, check out branches or push.
+
 ### Standups, handoffs and replay
 - **Daily standup** (<kbd>M</kbd>): everyone in the office walks to the meeting room, and a summary streams in (in about 15 seconds). It opens with the day's exact totals and a short **summary of the day**, then what **needs your attention**, then *Yesterday / Today / Blockers* for each agent who actually worked that day (or in the last 24 hours before anyone has started).
 - **Handoffs**: drag a report (or a latest reply) from the panel onto another agent, or use 🤝 *Hand off*. You get an editable first task ("Bug Hunter found this, Dwight fix it"), and it opens in a terminal, either continuing the target's session (they keep their memory) or as a new session in their project with their personality.
@@ -195,6 +200,7 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 | <kbd>N</kbd> | New session (hire an agent) |
 | <kbd>D</kbd> | Office dashboard |
 | <kbd>B</kbd> | Office TODO board |
+| <kbd>P</kbd> | PRs & MRs, and all-hands reviews |
 | <kbd>M</kbd> | Daily standup |
 | <kbd>T</kbd> | Replay the last 24 hours (<kbd>Space</kbd> to play / pause) |
 | <kbd>S</kbd> | Show / hide offline agents |
@@ -210,6 +216,7 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 ## Privacy & safety
 
 - The server listens on `127.0.0.1` only and reads your Claude Code data locally. Your transcripts are never uploaded anywhere by Agent Office.
+- **Only the office's own page can use its API.** Requests from other websites (and DNS-rebinding tricks) are rejected, so a page you visit can't start agents, send prompts or delete anything.
 - The only things that leave your machine are what Claude Code itself sends when you use **Ask**, **the PM**, **the standup**, **Generate quirks** or a **background role**, all of which run the regular `claude` CLI with your account. The PM and the standup include a short briefing of your sessions in their prompt. The page also loads its fonts from Google Fonts.
 - **Connect to Claude Code** adds one MCP server entry (`agent-office`) to your Claude Code user settings (`~/.claude.json`); *Disconnect* removes it.
 - **Ask** never writes to your session: Quick mode uses a separate, non-persistent prompt, and Deep mode uses a forked, non-persistent copy. Both run with all tools disabled.

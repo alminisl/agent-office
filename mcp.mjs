@@ -87,7 +87,7 @@ const TOOLS = [
 ];
 
 async function office(path, body) {
-  const res = await fetch(`${OFFICE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, pids: ancestors() }) });
+  const res = await fetch(`${OFFICE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Office': '1' }, body: JSON.stringify({ ...body, pids: ancestors() }) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Agent Office answered ${res.status}`);
   return data;

@@ -8,7 +8,7 @@ import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp } from './demo.mjs';
+import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp, demoPRs } from './demo.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -298,6 +298,7 @@ function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null, to
     const branchNote = wt ? `\n\n---\nBranch \`${wt.branch}\` in \`${wt.worktree}\`. Review with \`git diff HEAD...${wt.branch}\` in the original repo.` : '';
     syncBoardWithRun(id, ok ? 'done' : 'failed');
     await writeJson(path.join(REPORTS_DIR, `${id}.json`), { role, name: persona?.name, ok, result: result + branchNote, cost, startedAt: run.startedAt, endedAt: run.endedAt, hiredBy, task: prompt, branch: wt?.branch, worktree: wt?.worktree });
+    try { run.onDone?.(); } catch {}
   };
   child.on('error', e => finish(false, `Could not start claude: ${e.message}`, 0));
   child.on('close', code => {
@@ -308,6 +309,140 @@ function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null, to
     else finish(false, `claude exited with code ${code}. ${(err || out).slice(0, 1000)}`, 0);
   });
   return run;
+}
+
+// ---------- PRs & MRs: tracking and "all hands" reviews ----------
+// Repos come from the folders your sessions run in. GitLab repos are read with `glab`, GitHub
+// repos with `gh` (both run inside the repo, so they use its remote and your existing login).
+const REVIEWS_FILE = path.join(ROOT, 'data', 'reviews.json');
+const sh = (cmd, args, cwd) => new Promise(resolve => execFile(cmd, args, { cwd, timeout: 30e3, maxBuffer: 20 * 1024 * 1024 }, (err, out, errOut) => resolve({ ok: !err, out: String(out || ''), err: String(errOut || err?.message || '') })));
+async function discoverRepos() {
+  const roots = new Map();
+  for (const s of await listSessions()) {
+    if (!s.cwd || !fs.existsSync(s.cwd)) continue;
+    const top = await sh('git', ['-C', s.cwd, 'rev-parse', '--show-toplevel']);
+    if (!top.ok) continue;
+    const root = top.out.trim();
+    if (roots.has(root)) continue;
+    const remote = (await sh('git', ['-C', root, 'remote', 'get-url', 'origin'])).out.trim();
+    const m = remote.match(/^(?:https?:\/\/|ssh:\/\/)?(?:[^@]+@)?([^:/]+)[:/](.+?)(?:\.git)?$/);
+    if (!m) continue;
+    const provider = /github/i.test(m[1]) ? 'github' : /gitlab/i.test(m[1]) ? 'gitlab' : null;
+    if (provider) roots.set(root, { root, host: m[1], path: m[2], provider, name: path.basename(root) });
+  }
+  return [...roots.values()];
+}
+function normalize(repo, kind, x) {
+  if (repo.provider === 'gitlab') {
+    return { key: `${repo.path}!${x.iid}`, ref: `!${x.iid}`, repo: repo.path, root: repo.root, provider: 'gitlab', kind, number: x.iid, title: x.title, url: x.web_url, author: x.author?.username, draft: !!x.draft,
+      updatedAt: Date.parse(x.updated_at), createdAt: Date.parse(x.created_at), branch: x.source_branch, status: x.detailed_merge_status || '', conflicts: !!x.has_conflicts, comments: x.user_notes_count || 0, reviewers: (x.reviewers || []).map(r => r.username) };
+  }
+  return { key: `${repo.path}#${x.number}`, ref: `#${x.number}`, repo: repo.path, root: repo.root, provider: 'github', kind, number: x.number, title: x.title, url: x.url, author: x.author?.login, draft: !!x.isDraft,
+    updatedAt: Date.parse(x.updatedAt), createdAt: Date.parse(x.createdAt), branch: x.headRefName, status: x.reviewDecision || '', conflicts: x.mergeable === 'CONFLICTING', comments: 0, reviewers: [] };
+}
+const GH_FIELDS = 'number,title,url,author,isDraft,updatedAt,createdAt,headRefName,reviewDecision,mergeable';
+async function listRepoPRs(repo, teamLimit = 15) {
+  const q = repo.provider === 'gitlab'
+    ? { mine: ['mr', 'list', '--author=@me', '-F', 'json', '--per-page', '50'], review: ['mr', 'list', '--reviewer=@me', '-F', 'json', '--per-page', '50'], team: ['mr', 'list', '-F', 'json', '--per-page', String(teamLimit)] }
+    : { mine: ['pr', 'list', '--author', '@me', '--json', GH_FIELDS, '--limit', '50'], review: ['pr', 'list', '--search', 'review-requested:@me', '--json', GH_FIELDS, '--limit', '50'], team: ['pr', 'list', '--json', GH_FIELDS, '--limit', String(teamLimit)] };
+  const bin = repo.provider === 'gitlab' ? 'glab' : 'gh';
+  const out = { items: [], error: null };
+  for (const [kind, args] of Object.entries(q)) {
+    const r = await sh(bin, args, repo.root);
+    if (!r.ok) { out.error = `${bin} ${args.slice(0, 2).join(' ')}: ${r.err.split('\n')[0].slice(0, 160)}`; continue; }
+    try { for (const x of JSON.parse(r.out || '[]')) out.items.push(normalize(repo, kind, x)); } catch { out.error = `could not read ${bin} output`; }
+  }
+  return out;
+}
+let prCache = { at: 0, data: null };
+async function listPRs(force = false) {
+  if (!force && prCache.data && Date.now() - prCache.at < 3 * 60e3) return prCache.data;
+  const repos = await discoverRepos();
+  const byKey = new Map(), errors = [];
+  const results = await Promise.all(repos.map(repo => listRepoPRs(repo).then(r => ({ repo, ...r })))); // repos in parallel
+  for (const { repo, items, error } of results) {
+    if (error) errors.push({ repo: repo.path, error });
+    // one entry per PR; "review" and "mine" win over "team"
+    for (const it of items) { const prev = byKey.get(it.key); if (!prev || prev.kind === 'team') byKey.set(it.key, it); }
+  }
+  const sessions = await listSessions();
+  const reviews = await readJson(REVIEWS_FILE, {}).catch(() => ({}));
+  const items = [...byKey.values()].map(it => ({
+    ...it,
+    agentId: sessions.find(s => s.gitBranch && s.gitBranch === it.branch && s.cwd?.startsWith(it.root))?.id || null,
+    review: reviews[it.key] || null,
+  })).sort((a, b) => b.updatedAt - a.updatedAt);
+  prCache = { at: Date.now(), data: { at: Date.now(), repos: repos.map(r => ({ path: r.path, provider: r.provider, name: r.name })), items, errors } };
+  return prCache.data;
+}
+
+// Reviewers are read-only: they may use your review skill, read the MR/PR and the code, and run
+// sub-agents, but they can't comment, approve, check out branches or push.
+const REVIEW_SKILL_TOOLS = ['Skill', 'Agent', 'Task', 'Read', 'Grep', 'Glob', 'Bash(ls:*)', 'Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git show:*)', 'Bash(git status:*)', 'Bash(git branch:*)', 'Bash(git fetch:*)', 'Bash(git blame:*)', 'Bash(git merge-base:*)',
+  'Bash(glab mr view:*)', 'Bash(glab mr diff:*)', 'Bash(glab mr list:*)', 'Bash(gh pr view:*)', 'Bash(gh pr diff:*)', 'Bash(gh pr checks:*)', 'Bash(gh pr list:*)'];
+ROLE_TOOLS.prreview = REVIEW_SKILL_TOOLS;
+const REVIEW_SKILLS = ['review-mr-light', 'review-mr'];
+const MAX_PARALLEL_REVIEWS = 4;
+const reviewQueue = [];
+let reviewsRunning = 0;
+function pumpReviews() {
+  while (reviewsRunning < MAX_PARALLEL_REVIEWS && reviewQueue.length) {
+    const job = reviewQueue.shift();
+    reviewsRunning++;
+    const r = startBackgroundRun(job);
+    r.onDone = () => { reviewsRunning--; job.onDone?.(); pumpReviews(); };
+  }
+}
+const updateReview = (key, change) => updateJson(REVIEWS_FILE, {}, all => { all[key] = change(all[key] || {}); return all[key]; });
+
+async function reconcile(key, pr, ids) {
+  const reports = [];
+  for (const id of ids) { const r = await loadReport(id); if (r?.ok) reports.push({ name: r.name, text: r.result }); }
+  if (reports.length < 2) return updateReview(key, v => ({ ...v, status: reports.length ? 'done' : 'failed', verdict: reports.length ? 'single review' : 'failed', at: Date.now() }));
+  const prompt = `Two reviewers independently reviewed ${pr.provider === 'gitlab' ? 'merge request' : 'pull request'} ${pr.repo}${pr.ref} "${pr.title}".\n\n${reports.map((r, i) => `--- Review ${i + 1} (by ${r.name}) ---\n${r.text.slice(0, 12000)}`).join('\n\n')}\n\n`
+    + 'Cross-check them. Reply in markdown: a first line "**Verdict:** approve / approve with nits / changes requested / needs discussion", then "**Both found:**" (issues both reviewers agree on), "**Only one found:**" (say who, and whether you think it holds up), "**Disagreements:**", and "**Next steps:**". Be concise and concrete, keep file:line references. Do not invent issues neither reviewer mentioned.';
+  const out = await new Promise(resolve => {
+    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, '--model', process.env.PM_MODEL || 'sonnet', '--no-session-persistence', '--tools', '', '--output-format', 'text'], { cwd: os.tmpdir(), env: FAST_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+    let o = ''; child.stdout.on('data', d => { o += d; }); child.on('close', () => resolve(o.trim())); child.on('error', () => resolve(''));
+  });
+  const verdict = (out.match(/\*\*Verdict:\*\*\s*([^\n]+)/i)?.[1] || 'see summary').trim();
+  return updateReview(key, v => ({ ...v, status: 'done', verdict, summary: out || '(the cross-check produced no output)', at: Date.now() }));
+}
+
+const REVIEWER_NAMES = ['Sherlock', 'Marple', 'Poirot', 'Columbo', 'Watson', 'Holmes', 'Lestrade', 'Morse', 'Vera', 'Luther', 'Monk', 'Magnum'];
+async function startReviews({ keys = [], skill = 'review-mr-light', crossCheck = true }) {
+  if (!REVIEW_SKILLS.includes(skill)) skill = 'review-mr-light';
+  const data = await listPRs();
+  const prs = data.items.filter(p => keys.includes(p.key));
+  if (!prs.length) throw Object.assign(new Error('No matching PRs/MRs.'), { status: 400 });
+  if (prs.length > 12) throw Object.assign(new Error('That is a lot of reviews at once. Pick at most 12.'), { status: 400 });
+  const personalities = await loadPersonalities();
+  const used = new Set(Object.values(personalities).map(p => p.name));
+  const names = REVIEWER_NAMES.filter(n => !used.has(n));
+  let n = 0;
+  const started = [];
+  for (const pr of prs) {
+    const per = crossCheck ? 2 : 1, ids = [];
+    for (let k = 0; k < per; k++) {
+      const id = randomUUID();
+      const name = names[n % Math.max(1, names.length)] ? `${names[n % names.length]}${n >= names.length ? ` ${Math.floor(n / names.length) + 1}` : ''}` : `Reviewer ${n + 1}`;
+      n++;
+      const persona = { name, preset: k === 0 ? 'detective' : 'perfectionist', role: 'reviewer', hangout: 'lounge', impact: true, auto: false, allHands: true, reviewOf: pr.key };
+      persona.workStyle = `You are "${name}", a reviewer in the user's AI office.`;
+      await savePersonality(id, persona);
+      ids.push(id);
+      const prompt = `Use the ${skill} skill to review ${pr.provider === 'gitlab' ? 'merge request' : 'pull request'} ${pr.url} ("${pr.title}").\n\n`
+        + `This is part of an automated "all hands" review in Agent Office${crossCheck ? ', and another reviewer is reviewing the same change independently' : ''}. `
+        + 'Report only: never post comments, approve, merge, check out branches or change anything. Your final message is your review report.';
+      reviewQueue.push({ id, cwd: pr.root, prompt, persona, role: 'prreview', onDone: () => { if (ids.length === per && ids.every(x => runs.get(x) && runs.get(x).state !== 'running')) reconcile(pr.key, pr, ids); } });
+    }
+    await updateReview(pr.key, () => ({ status: 'running', skill, crossCheck, runs: ids, startedAt: Date.now(), title: pr.title, url: pr.url }));
+    await boardOp('add', { title: `Review ${pr.repo.split('/').pop()}${pr.ref}: ${pr.title}`.slice(0, 200), project: path.basename(pr.root), status: 'doing', sessionId: ids[0], notes: `${pr.url}\nAll-hands review with ${skill}${crossCheck ? ', cross-checked by two reviewers' : ''}.` }, 'All hands').catch(() => {});
+    started.push({ key: pr.key, runs: ids });
+  }
+  pumpReviews();
+  prCache.at = 0;
+  return { started, reviews: started.length * (crossCheck ? 2 : 1) };
 }
 
 // ---------- the Product Manager: knows what everyone in the office is doing ----------
@@ -972,6 +1107,8 @@ async function demoRoute(url, req, res) {
     return res.end();
   }
   if (url.pathname === '/api/pm/plan') return json(res, 200, DEMO_PLAN);
+  if (url.pathname === '/api/prs') return json(res, 200, demoPRs());
+  if (url.pathname === '/api/allhands') { const b = await readBody(req); return json(res, 200, { started: (b.keys || []).map(key => ({ key, runs: [] })), reviews: (b.keys || []).length * (b.crossCheck ? 2 : 1), demo: true }); }
   if ((m = url.pathname.match(/^\/api\/chat\/([\w-]+)$/))) return json(res, 200, req.method === 'POST' ? demoChatOp(m[1], await readBody(req)) : demoChat(m[1]));
   if (url.pathname === '/api/board') return json(res, 200, req.method === 'POST' ? demoBoardOp(await readBody(req)) : { items: demoBoard() });
   if (url.pathname === '/api/mcp') return json(res, 200, { installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
@@ -1000,9 +1137,24 @@ async function readBody(req) {
   return b ? JSON.parse(b) : {};
 }
 
+// Only our own page (and the local MCP server) may use the API. Browsers attach an Origin to
+// cross-site requests, and a custom header can't be sent cross-site without a CORS preflight
+// (which we never allow), so other websites can't drive the office. The Host check stops
+// DNS-rebinding tricks.
+const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
+function allowed(req, url) {
+  if (!url.pathname.startsWith('/api/')) return true;
+  if (!LOCAL_HOSTS.has(req.headers.host)) return false;
+  const origin = req.headers.origin;
+  if (origin && !LOCAL_HOSTS.has(origin.replace(/^https?:\/\//, ''))) return false;
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers['x-agent-office'] !== '1') return false;
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   let m;
+  if (!allowed(req, url)) return json(res, 403, { error: 'Requests to Agent Office must come from its own page.' });
   try {
     if (DEMO && url.pathname.startsWith('/api/') && url.pathname !== '/api/config') return demoRoute(url, req, res);
     if (url.pathname === '/api/sessions') return json(res, 200, await listSessions());
@@ -1048,6 +1200,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/delete\/([\w-]+)$/))) {
       try { return json(res, 200, await deleteAgent(m[1], await readBody(req))); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
+    }
+    if (url.pathname === '/api/prs') return json(res, 200, await listPRs(url.searchParams.has('refresh')));
+    if (req.method === 'POST' && url.pathname === '/api/allhands') {
+      try { return json(res, 200, await startReviews(await readBody(req))); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
     }
     if (url.pathname === '/api/board') {
       if (req.method !== 'POST') return json(res, 200, await loadBoard());

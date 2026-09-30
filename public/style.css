@@ -331,3 +331,32 @@ button.danger.primary { background: #c0392b; border-color: #c0392b; color: #fff;
 .empty-state p { max-width: 520px; color: var(--muted); }
 .empty-state .row { justify-content: center; flex-wrap: wrap; align-items: center; }
 .btn-link { color: var(--text); text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; }
+
+/* ---- PRs & MRs ---- */
+.count-badge { background: var(--accent); color: #1d1b26; border-radius: 99px; padding: 0 6px; font-size: 11px; font-weight: 700; margin-left: 2px; }
+.count-badge[hidden] { display: none; }
+.card.prs { width: min(1100px, 100%); max-height: 90vh; }
+.tabs button span { color: var(--muted); font-size: 11px; }
+.pr-list { display: flex; flex-direction: column; gap: 6px; overflow: auto; min-height: 200px; }
+.pr { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; }
+.pr input[type=checkbox] { width: auto; }
+.pr .t { font-weight: 600; font-size: 13px; }
+.pr .t a { color: var(--text); text-decoration: none; }
+.pr .t a:hover { color: var(--accent); }
+.pr .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 11px; color: var(--muted); margin-top: 3px; }
+.pr .chip-warn { color: #ffb3a7; } .pr .chip-ok { color: #9be7a5; }
+.pr .rev { grid-column: 2 / 4; background: var(--panel); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; }
+.pr .side { display: flex; gap: 6px; align-items: center; }
+.pr .side button { font-size: 11px; padding: 3px 9px; }
+.allhands { border-top: 1px solid var(--border); padding-top: 10px; }
+.ah-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.ah-row label { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--text) !important; flex-direction: row !important; }
+.ah-row select { width: auto; }
+.ah-row #ahStart { margin-left: auto; }
+
+/* header: labels collapse to icons when space runs out (tooltips explain them) */
+header { flex-wrap: nowrap; }
+header button, header .toggle { white-space: nowrap; flex: none; }
+header #stats { flex-wrap: nowrap; overflow: hidden; min-width: 0; }
+@media (max-width: 1500px) { header .lbl { display: none; } header #stats span { font-size: 12px; } }
+@media (max-width: 1100px) { header #stats { display: none; } }

@@ -214,3 +214,22 @@ export function demoChatOp(id, b) {
   if (b.op === 'deleteAll') delete chats[id];
   return chats[id] || { current: [], archived: [] };
 }
+
+// PRs & MRs in demo mode
+export function demoPRs() {
+  const ids = demoSessions().map(s => s.id), now = Date.now(), h = n => now - n * 3600e3;
+  const mk = (repo, provider, n, title, kind, extra = {}) => ({ key: `${repo}${provider === 'gitlab' ? '!' : '#'}${n}`, ref: `${provider === 'gitlab' ? '!' : '#'}${n}`, repo, root: `/home/dev/code/${repo.split('/').pop()}`, provider, kind, number: n, title,
+    url: `https://${provider}.com/${repo}/-/merge_requests/${n}`, author: kind === 'mine' ? 'you' : 'teammate', draft: false, updatedAt: h(n % 30), createdAt: h(n % 30 + 20), branch: `feat/${n}`, status: 'mergeable', conflicts: false, comments: n % 7, reviewers: [], agentId: null, review: null, ...extra });
+  return {
+    at: now, errors: [],
+    repos: [{ path: 'acme/api-gateway', provider: 'gitlab', name: 'api-gateway' }, { path: 'acme/pixel-shop', provider: 'github', name: 'pixel-shop' }],
+    items: [
+      mk('acme/api-gateway', 'gitlab', 412, 'Rate limiting middleware', 'mine', { agentId: ids[3], status: 'ci_must_pass' }),
+      mk('acme/pixel-shop', 'github', 88, 'Checkout flow redesign', 'mine', { agentId: ids[0], review: { status: 'done', verdict: 'approve with nits', crossCheck: true, summary: '**Verdict:** approve with nits\n\n**Both found:** the discount is applied twice when a coupon and a gift card are combined (`Cart.tsx:141`).\n\n**Only one found:** Sherlock flagged a missing loading state on the pay button; it holds up.\n\n**Next steps:** fix the double discount, add a test for coupon + gift card.' } }),
+      mk('acme/api-gateway', 'gitlab', 405, 'OpenAPI spec cleanup', 'review', { author: 'teammate' }),
+      mk('acme/pixel-shop', 'github', 91, 'Dark mode tokens', 'team', { draft: true }),
+      mk('acme/api-gateway', 'gitlab', 399, 'Upgrade to Go 1.24', 'team', { conflicts: true, status: 'conflict' }),
+      mk('acme/pixel-shop', 'github', 90, 'Fix flaky cart tests', 'team'),
+    ],
+  };
+}

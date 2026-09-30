@@ -3,6 +3,15 @@ import { buildWorld, findPath, projectColor, EXEC_LEVEL } from './world.js';
 import { PRESETS, SKINS, HAIRS, SHIRTS, PANTS, HAIR_STYLES, personaFor, styleFor, assignUniqueNames, workStyleFor, ROLES, roleFor, PACKS, presetOptions, defaultPersona } from './personas.js';
 
 const $ = s => document.querySelector(s);
+// every API call carries the header the server requires (see allowed() in server.mjs)
+{
+  const plainFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url.startsWith('/api/')) return plainFetch(input, init);
+    return plainFetch(input, { ...init, headers: { ...(init.headers || {}), 'X-Agent-Office': '1' } });
+  };
+}
 const canvas = $('#office');
 const ctx = canvas.getContext('2d');
 const viewport = $('#viewport');
@@ -623,6 +632,94 @@ $('#tlRange').oninput = e => {
   applyReplay();
 };
 window.addEventListener('resize', () => { if (replay.on) drawSparkline(); });
+
+// ---------------- PRs & MRs, all-hands reviews ----------------
+let prData = null, prTab = 'review';
+const prSelected = new Set();
+const prAgents = new Set(); // agents working on the branch of an open PR/MR
+async function loadPRs(force = false) {
+  try { prData = await (await fetch(`/api/prs${force ? '?refresh' : ''}`)).json(); } catch { return; }
+  prAgents.clear();
+  for (const it of prData.items || []) if (it.agentId && it.kind !== 'team') prAgents.add(it.agentId);
+  const n = (prData.items || []).filter(i => i.kind === 'review' || i.kind === 'mine').length;
+  $('#prCount').hidden = !n; $('#prCount').textContent = n;
+  if (!$('#prModal').hidden) renderPRs();
+}
+function renderPRs() {
+  const items = prData?.items || [];
+  const counts = { review: 0, mine: 0, team: 0 };
+  for (const i of items) counts[i.kind]++;
+  document.querySelectorAll('#prTabs button').forEach(b => { b.classList.toggle('active', b.dataset.pr === prTab); b.querySelector('span').textContent = counts[b.dataset.pr] ? `(${counts[b.dataset.pr]})` : ''; });
+  $('#prMeta').textContent = prData ? `${prData.repos.length} repo${prData.repos.length === 1 ? '' : 's'} · updated ${ago(prData.at)}${prData.errors.length ? ` · ⚠️ ${prData.errors.length} error${prData.errors.length > 1 ? 's' : ''}` : ''}` : 'Loading…';
+  const list = items.filter(i => i.kind === prTab);
+  $('#prList').innerHTML = (!prData ? '<p class="muted">Asking GitLab and GitHub…</p>' : '') + list.map(it => {
+    const a = it.agentId && agents.get(it.agentId);
+    const rv = it.review;
+    const revChip = !rv ? '' : rv.status === 'running' ? '<span class="pill" data-tip="Reviewers are working on it">🔎 reviewing…</span>' : `<span class="pill" data-tip="Result of the all-hands review">✅ ${escapeHtml(rv.verdict || 'reviewed')}</span>`;
+    return `<div class="pr" data-key="${escapeHtml(it.key)}">
+      <input type="checkbox" data-sel ${prSelected.has(it.key) ? 'checked' : ''} data-tip="Include in the all-hands review">
+      <div>
+        <div class="t"><a href="${escapeHtml(it.url)}" target="_blank" rel="noopener">${it.provider === 'gitlab' ? '🦊' : '🐙'} ${escapeHtml(it.repo.split('/').pop())}${escapeHtml(it.ref)} · ${escapeHtml(it.title)}</a></div>
+        <div class="meta"><span>by ${escapeHtml(it.author || '?')}</span><span>· updated ${ago(it.updatedAt)}</span>
+          ${it.draft ? '<span class="pill">draft</span>' : ''}${it.conflicts ? '<span class="pill chip-warn" data-tip="Has merge conflicts">⚠️ conflicts</span>' : ''}
+          ${it.status && !['mergeable', ''].includes(it.status) ? `<span class="pill" data-tip="Merge status">${escapeHtml(it.status.replace(/_/g, ' '))}</span>` : ''}
+          ${it.comments ? `<span>💬 ${it.comments}</span>` : ''}
+          ${a ? `<span class="pill" data-open="${a.id}" data-tip="The agent working on this branch. Click to open their panel.">🧑‍💻 ${escapeHtml(a.persona.name)}</span>` : ''}${revChip}</div>
+      </div>
+      <div class="side">${rv?.summary ? '<button data-show>📋 Review</button>' : ''}${(rv?.runs || []).length ? `<button data-reviewers data-tip="Open the reviewers' own reports">🔎 Reviewers</button>` : ''}</div>
+      ${rv?.summary ? `<div class="rev md" hidden>${md(rv.summary)}</div>` : ''}
+    </div>`;
+  }).join('') + (prData && !list.length ? `<p class="muted">Nothing here.${prData.errors.length ? ` Errors: ${prData.errors.map(e => escapeHtml(`${e.repo}: ${e.error}`)).join('; ')}` : ''}</p>` : '');
+  $('#prList').querySelectorAll('.pr').forEach(row => {
+    const it = items.find(i => i.key === row.dataset.key);
+    row.querySelector('[data-sel]').onchange = e => { e.target.checked ? prSelected.add(it.key) : prSelected.delete(it.key); updateAllHands(); };
+    const show = row.querySelector('[data-show]'); if (show) show.onclick = () => { const r = row.querySelector('.rev'); r.hidden = !r.hidden; };
+    const revs = row.querySelector('[data-reviewers]'); if (revs) revs.onclick = () => { const id = it.review.runs.find(x => agents.has(x)); if (id) { $('#prModal').hidden = true; select(id, false); } else toast('The reviewers are not in the office right now (turn on Show offline).'); };
+    row.querySelectorAll('[data-open]').forEach(el => el.onclick = () => { $('#prModal').hidden = true; select(el.dataset.open, false); });
+  });
+  updateAllHands();
+}
+function updateAllHands() {
+  const n = prSelected.size, cross = $('#ahCross').checked, deep = $('#ahSkill').value === 'review-mr';
+  const reviews = n * (cross ? 2 : 1);
+  const [lo, hi] = deep ? [1.5, 4] : [0.4, 1.5];
+  $('#ahSel').textContent = n ? `${n} selected → ${reviews} review${reviews > 1 ? 's' : ''}` : 'select PRs/MRs above';
+  $('#ahStart').disabled = !n;
+  $('#ahNote').innerHTML = n ? `Rough cost: <b>$${(reviews * lo).toFixed(0)}–$${(reviews * hi).toFixed(0)}</b> on your Claude account (depends on the size of the changes). At most 4 reviewers work at once. Reviewers are read-only: they never comment, approve or push. Each PR gets a card on the board and ${cross ? 'a cross-checked verdict' : 'a report'} here.` : 'Tick the PRs/MRs to review. Everyone gathers in the meeting room, then the reviewers get to work.';
+}
+async function openPRs() {
+  $('#prModal').hidden = false;
+  if (!prData) { renderPRs(); await loadPRs(); }
+  if (!prSelected.size) for (const i of prData?.items || []) if (i.kind === 'review') prSelected.add(i.key);
+  prTab = (prData?.items || []).some(i => i.kind === 'review') ? prTab : 'mine';
+  renderPRs();
+}
+$('#prBtn').onclick = openPRs;
+$('#prRefresh').onclick = () => { $('#prMeta').textContent = 'Refreshing…'; loadPRs(true); };
+document.querySelectorAll('#prTabs button').forEach(b => b.onclick = () => { prTab = b.dataset.pr; renderPRs(); });
+$('#ahSkill').onchange = updateAllHands; $('#ahCross').onchange = updateAllHands;
+$('#ahStart').onclick = async () => {
+  const keys = [...prSelected];
+  $('#ahStart').disabled = true;
+  try {
+    const r = await post('/api/allhands', { keys, skill: $('#ahSkill').value, crossCheck: $('#ahCross').checked });
+    $('#prModal').hidden = true;
+    allHandsGather();
+    toast(`🚨 All hands! ${r.reviews} review${r.reviews > 1 ? 's' : ''} on ${keys.length} PR/MR${keys.length > 1 ? 's' : ''}. Reviewers are on their way.`);
+    prSelected.clear();
+    setTimeout(() => { refresh(); loadPRs(true); loadBoard(); }, 2500);
+  } catch (e) { toast(`Could not start the review: ${escapeHtml(e.message)}`); }
+  $('#ahStart').disabled = false;
+};
+// everyone gathers in the meeting room for a moment, then goes back to work
+function allHandsGather() {
+  if (!world || standup.on) return;
+  standup.on = true;
+  for (const a of agents.values()) if (!a.away && a.task !== 'meeting') { joinMeeting(a); a.quip = choice(['🚨 All hands!', 'On it!', 'Reviews!', '🔎 Let\'s go']); a.quipT = -3; }
+  const pm = agents.get('pm'); if (pm) { pm.quip = '📋 Everyone: review time!'; pm.quipT = -5; }
+  setTimeout(endStandup, 14000);
+}
+setInterval(() => loadPRs(), 3 * 60e3);
 
 // ---------------- TODO board ----------------
 let boardItems = [];
@@ -1377,7 +1474,7 @@ function drawOverlay(s) {
     ctx.font = `600 ${fs}px Inter, sans-serif`;
     ctx.fillStyle = '#fff';
     const icon = roleFor(a?.persona.role)?.icon;
-    const nm = `${icon ? `${icon} ` : ''}${a?.persona.name || ''}`;
+    const nm = `${icon ? `${icon} ` : ''}${a?.persona.name || ''}${prAgents.has(ss.id) ? ' 🔀' : ''}`;
     const who = room.kind === 'office' ? `${nm} · ${ss.rank || ''}` : nm;
     ctx.fillText(fit(who, w - 32 * dpr - lw), x + 19 * dpr, y + 5 * dpr + fs / 2);
     // status line: what they are doing right now
@@ -1642,7 +1739,7 @@ function renderPMWork() {
     </div>
     <div id="pmPlanOut"></div>
     <p class="muted small">I don't write code myself. I read a fresh briefing of every agent (status, recent messages, reports) and the board each time you ask, so my answers are always current.</p>`;
-  const askPM = q => { document.querySelector('.tabs [data-tab=ask]').click(); ask(q); };
+  const askPM = q => { document.querySelector('#panel .tabs [data-tab=ask]').click(); ask(q); };
   $('#pmAskStatus').onclick = () => askPM('Give me a quick status report on the whole office.');
   $('#pmAskBlocked').onclick = () => askPM("What's blocked right now, and what would unblock it?");
   $('#pmBoard').onclick = openTodo;
@@ -1744,8 +1841,8 @@ function renderWork() {
 }
 
 // tabs
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('active', x === b));
+document.querySelectorAll('#panel .tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#panel .tabs button').forEach(x => x.classList.toggle('active', x === b));
   document.querySelectorAll('.tab').forEach(t => { t.hidden = t.id !== `tab-${b.dataset.tab}`; });
 });
 
@@ -2311,10 +2408,10 @@ document.addEventListener('keydown', e => {
   if (e.key === '-') return $('#zoomOut').click();
   if (e.key === '0') return setZoom(0);
   const actions = {
-    n: () => { newTodo = null; openNew(); }, d: () => openBoard(), b: () => openTodo(), s: () => setShowOffline(!showOffline),
+    n: () => { newTodo = null; openNew(); }, d: () => openBoard(), b: () => openTodo(), p: () => openPRs(), s: () => setShowOffline(!showOffline),
     m: () => (standup.on ? endStandup() : startStandup()), t: () => (replay.on ? stopReplay() : startReplay()),
     o: () => selectedId && openInTerminal(), c: () => selectedId && $('#copyCmd').click(), h: () => selectedId && hideSelected(),
-    a: () => { if (selectedId) { document.querySelector('.tabs [data-tab=ask]').click(); $('#askInput').focus(); } },
+    a: () => { if (selectedId) { document.querySelector('#panel .tabs [data-tab=ask]').click(); $('#askInput').focus(); } },
   };
   // Letter shortcuts wait a moment: if another letter follows quickly you're typing a word
   // (like a cheat code), so the shortcut is cancelled.
@@ -2346,6 +2443,7 @@ seedNews();
 setInterval(() => { for (const a of agents.values()) if (a.session.status === 'waiting' && a.waitingSince && Date.now() - a.waitingSince > 10 * 60e3 && !news.some(n => n.who === a.id && n.type === 'waiting' && Date.now() - n.t < 3600e3)) officeNews('waiting', a); }, 60000);
 await loadSetup();
 renderEmptyState();
+loadPRs();
 if (!store.get('tourDone', false)) setTimeout(startTour, 700);
 else openChecklist();
 setInterval(refresh, 3000);
