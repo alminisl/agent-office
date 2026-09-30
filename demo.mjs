@@ -257,3 +257,30 @@ export function demoReviews() {
   }
   return demoReviewState;
 }
+
+// Brainstorms in demo mode: ideas arrive one by one, then a summary
+const demoStorms = {};
+const DEMO_IDEAS = [
+  '**Cache dependencies between CI runs**\nMost of our 11-minute pipeline is npm install. A shared cache would cut it roughly in half.\n\n**Run only affected tests**\nUse the dependency graph to skip test suites that a change cannot touch.\n\n**Split the e2e suite**\nShard it across 4 runners.',
+  '**Kill the flaky tests first**\nEvery flaky retry costs minutes. Quarantine the top 5 offenders.\n\n**Nightly full run**\nKeep PR runs lean and run everything once a night.\n\n**Faster Docker base image**\nWe rebuild the same layers on every run.',
+  '**Measure before we optimise**\nAdd timing per step so we know where the minutes go.\n\n**Parallel lint and typecheck**\nThey run one after the other today for no reason.\n\n**Smaller PRs**\nBig PRs trigger the whole matrix.',
+];
+export function demoStartBrainstorm({ topic, participants = [], reactions = true, names = {} }) {
+  const ids = participants.filter(x => x !== 'pm').slice(0, 8);
+  const all = demoSessions();
+  const b = { id: `demo${Date.now()}`, topic: topic || 'How can we make CI faster?', status: 'running', stage: 'ideas', startedAt: Date.now(), participants: ids.map(id => ({ id, name: names[id] || all.find(s => s.id === id)?.personality?.name || 'Agent' })), ideas: {}, reactions: {}, summary: '', cost: 0, reactionsRound: reactions };
+  demoStorms[b.id] = b;
+  return b;
+}
+export function demoBrainstorm(id) {
+  const b = demoStorms[id];
+  if (!b || b.status !== 'running') return b || null;
+  const t = (Date.now() - b.startedAt) / 1000;
+  b.participants.forEach((p, i) => { if (t > 1.5 + i * 1.2) b.ideas[p.id] = DEMO_IDEAS[i % DEMO_IDEAS.length]; });
+  if (t > 1.5 + b.participants.length * 1.2) { b.stage = b.reactionsRound ? 'reactions' : 'summary'; }
+  if (b.reactionsRound && t > 3 + b.participants.length * 1.2) b.participants.forEach(p => { b.reactions[p.id] = '**Building on:** the caching idea. Pair it with timing per step so we can prove the win.\n**Concern:** skipping tests could hide real regressions.'; });
+  if (t > 5 + b.participants.length * 1.5) Object.assign(b, { stage: 'done', status: 'done', facilitator: 'Morgan', cost: 0.18 * b.participants.length, at: Date.now(),
+    summary: '**In short:** everyone agrees that dependency installs and flaky retries eat most of the pipeline. Measure first, then cache and shard.\n\n**Top ideas:**\n1. **Cache dependencies between runs**: the biggest, cheapest win.\n2. **Quarantine flaky tests**: every retry costs minutes and trust.\n3. **Measure each step**: so we optimise the right thing.\n4. **Shard the e2e suite** across 4 runners.\n\n**Themes:** measure first, remove waste, then parallelise.\n\n**Open questions:** how much can we skip safely with affected-tests-only?\n\n**Next steps:**\n- Add per-step timing to CI\n- Enable the dependency cache\n- Quarantine the top 5 flaky tests' });
+  return b;
+}
+export const demoBrainstormList = () => Object.values(demoStorms).map(({ id, topic, status, stage, startedAt, participants }) => ({ id, topic, status, stage, startedAt, participants }));

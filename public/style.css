@@ -370,3 +370,22 @@ header #stats { flex-wrap: nowrap; overflow: hidden; min-width: 0; }
 #rvAuthorBox summary { cursor: pointer; font-weight: 600; }
 .rv-people { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
 .rv-people .pill { cursor: pointer; color: var(--text); }
+
+/* ---- brainstorm ---- */
+.card.brain { width: min(760px, 100%); max-height: 90vh; }
+.brain-parts-head { display: flex; align-items: center; gap: 8px; }
+.brain-parts-head .spacer { flex: 1; }
+.brain-parts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; max-height: 260px; overflow: auto; }
+.brain-parts label { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; color: var(--text) !important; font-size: 12px !important; cursor: pointer; }
+.brain-parts label input { width: auto; }
+.brain-parts label canvas { image-rendering: pixelated; flex: none; }
+.brain-parts label .who { display: flex; flex-direction: column; min-width: 0; }
+.brain-parts label .who span { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-opts { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.brain-feed { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; max-height: 40vh; overflow: auto; }
+.brain-feed div { background: var(--panel-2); border-radius: 6px; padding: 6px 8px; }
+.br-topic { font-weight: 600; font-size: 15px; }
+#brIdeas .idea { background: var(--panel-2); border-radius: 8px; padding: 8px 10px; margin-top: 6px; font-size: 12.5px; white-space: pre-wrap; }
+#brainHistoryList div { cursor: pointer; padding: 4px 0; font-size: 12.5px; }
+#brainHistoryList div:hover { color: var(--accent); }
+#brainLive { left: auto; right: 16px; }

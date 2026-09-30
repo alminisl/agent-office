@@ -68,6 +68,12 @@ Live status comes from `~/.claude/sessions`:
   - **A results popup** when each review finishes: the verdict, a summary of what happened (what everyone found, what only some found, disagreements, the author's take, next steps), the author's full response, who reviewed, time and cost, with buttons to open the PR, copy the summary, or add the next steps to the board.
 - Reviewers are **read-only**: they can use the skill, read the PR and the code, and run sub-agents, but they can't comment, approve, check out branches or push.
 
+### Brainstorm
+- **💡 Brainstorm** (<kbd>I</kbd>): pose a topic and pick up to 8 agents. They walk to the meeting room and each pitches ideas **in their own voice**, drawing on their personality and on what they work on. Ideas pop up as speech bubbles and in a live feed.
+- An optional **reaction round** has everyone build on the best ideas of the others and name a concern. Then **Morgan the PM** sums it up: in short, the top ideas (credited by name), themes, open questions and next steps.
+- A **results popup** shows the outcome and everyone's ideas, and can add the top ideas to the board. Past brainstorms are kept.
+- **Full memory** mode lets each agent answer from a throwaway copy of its whole conversation (richer, slower, costs more); the default uses a short briefing. Their real sessions are never touched.
+
 ### Standups, handoffs and replay
 - **Daily standup** (<kbd>M</kbd>): everyone in the office walks to the meeting room, and a summary streams in (in about 15 seconds). It opens with the day's exact totals and a short **summary of the day**, then what **needs your attention**, then *Yesterday / Today / Blockers* for each agent who actually worked that day (or in the last 24 hours before anyone has started).
 - **Handoffs**: drag a report (or a latest reply) from the panel onto another agent, or use 🤝 *Hand off*. You get an editable first task ("Bug Hunter found this, Dwight fix it"), and it opens in a terminal, either continuing the target's session (they keep their memory) or as a new session in their project with their personality.
@@ -189,6 +195,7 @@ All settings are optional environment variables:
 | `ASK_MODEL` | `haiku` | Model used by Quick mode in the Ask tab |
 | `STANDUP_MODEL` | `ASK_MODEL` | Model that writes the standup summary |
 | `PM_MODEL` | `sonnet` | Model the Product Manager answers with |
+| `BRAINSTORM_MODEL` | `sonnet` | Model brainstorm participants think with (quick mode) |
 | `CONTEXT_WINDOW` | `200000` (or 1M for `[1m]` models) | Context window size used for the context bar |
 | `DEMO` | unset | Set to `1` for demo mode (same as `--demo`) |
 
@@ -203,6 +210,7 @@ Example: `PORT=8080 MAX_DAYS=7 npm start`
 | <kbd>D</kbd> | Office dashboard |
 | <kbd>B</kbd> | Office TODO board |
 | <kbd>P</kbd> | PRs & MRs, and all-hands reviews |
+| <kbd>I</kbd> | Brainstorm with your agents |
 | <kbd>M</kbd> | Daily standup |
 | <kbd>T</kbd> | Replay the last 24 hours (<kbd>Space</kbd> to play / pause) |
 | <kbd>S</kbd> | Show / hide offline agents |

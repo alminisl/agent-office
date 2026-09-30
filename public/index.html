@@ -15,6 +15,7 @@
     <div class="spacer"></div>
     <label class="toggle" data-tip="Show cubicles of sessions that are not running (out of office). Shortcut: S"><input type="checkbox" id="showOffline"> <span class="lbl">Show offline</span></label>
  <button id="prBtn" data-tip="Your open PRs and MRs, the ones waiting for your review, and all-hands reviews. Shortcut: P">🔀<span class="lbl"> PRs</span> <span id="prCount" class="count-badge" hidden></span></button>
+    <button id="brainBtn" data-tip="Brainstorm: pick agents and a topic; they each pitch ideas in their own voice, react to each other, and the PM sums it up. Shortcut: I">💡<span class="lbl"> Brainstorm</span></button>
     <button id="todoBtn" data-tip="The office TODO board: what still needs doing, what's in progress and what's done. Shortcut: B">📋<span class="lbl"> Board</span></button>
     <button id="standupBtn" data-tip="Daily standup: everyone walks to the meeting room and you get yesterday, today and blockers for everyone who worked today. Shortcut: M">🧍<span class="lbl"> Standup</span></button>
     <button id="replayBtn" data-tip="Replay the last 24 hours and watch who was working when. Shortcut: T">⏱️<span class="lbl"> Replay</span></button>
@@ -266,6 +267,7 @@
             <li><kbd>N</kbd> hire a new agent (new session)</li>
             <li><kbd>B</kbd> the office TODO board</li>
             <li><kbd>P</kbd> PRs &amp; MRs, and all-hands reviews</li>
+            <li><kbd>I</kbd> brainstorm with your agents</li>
             <li><kbd>M</kbd> daily standup in the meeting room</li>
             <li><kbd>T</kbd> replay the last 24 hours (<kbd>Space</kbd> play / pause)</li>
             <li><kbd>D</kbd> office dashboard (costs, employees, leaderboard, settings)</li>
@@ -343,6 +345,39 @@
         <p id="ahNote" class="muted small"></p>
       </div>
     </div>
+  </div>
+
+  <div id="brainModal" class="modal" hidden>
+    <form id="brainForm" class="card brain">
+      <div class="board-head"><h2>💡 Brainstorm</h2><button type="button" class="icon" data-close title="Close (Esc)">✕</button></div>
+      <label>Topic <textarea name="topic" rows="3" required placeholder="e.g. How can we cut our CI time in half? · What should we build next quarter? · How do we make onboarding easier?"></textarea></label>
+      <div class="brain-parts-head"><b>Who joins?</b> <span id="brainCount" class="muted small"></span><span class="spacer"></span><button type="button" class="small" id="brainAll">All</button><button type="button" class="small" id="brainNone">None</button></div>
+      <div id="brainParts" class="brain-parts"></div>
+      <div class="brain-opts">
+        <label class="toggle" data-tip="After the first round, everyone reads the others' ideas, builds on the best ones and names a concern."><input type="checkbox" name="reactions" checked> Reaction round</label>
+        <label class="toggle" data-tip="Each agent answers from a throwaway copy of its whole conversation instead of a short briefing. Richer, slower, costs more. Their real sessions are never touched."><input type="checkbox" name="deep"> Full memory</label>
+        <span id="brainEst" class="muted small"></span>
+      </div>
+      <div class="row"><button type="submit" class="primary">💡 Start brainstorm</button><button type="button" class="ghost" data-close>Cancel</button></div>
+      <details id="brainHistory" hidden><summary>Past brainstorms</summary><div id="brainHistoryList"></div></details>
+    </form>
+  </div>
+
+  <div id="brainResult" class="modal" hidden>
+    <div class="card review-done">
+      <div class="board-head"><h2>💡 Brainstorm results</h2><button class="icon" data-close title="Close (Esc)">✕</button></div>
+      <div id="brTopic" class="br-topic"></div>
+      <div id="brSummary" class="md rv-summary"></div>
+      <details><summary>Everyone's ideas</summary><div id="brIdeas"></div></details>
+      <div id="brMeta" class="rv-people"></div>
+      <div class="row"><button id="brBoard" data-tip="Add the top ideas as cards on the board">📋 Add top ideas to the board</button><button id="brCopy">Copy</button><button class="primary" data-close>Close</button></div>
+    </div>
+  </div>
+
+  <div id="brainLive" class="floating-card" hidden>
+    <div class="fc-head"><b>💡 Brainstorm</b><span id="brainStage" class="muted small"></span></div>
+    <div id="brainLiveTopic" class="small"></div>
+    <div id="brainFeed" class="brain-feed"></div>
   </div>
 
   <div id="reviewModal" class="modal" hidden>

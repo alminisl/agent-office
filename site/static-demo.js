@@ -3,7 +3,7 @@
 // Loaded before app.js by the Pages build (.github/workflows/pages.yml).
 import {
   demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, demoTimeline, demoBoard, demoBoardOp,
-  demoChat, demoChatOp, demoPRs, demoStartReviews, demoReviews, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, DEMO_PM, DEMO_PLAN,
+  demoChat, demoChatOp, demoPRs, demoStartReviews, demoReviews, demoStartBrainstorm, demoBrainstorm, demoBrainstormList, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, DEMO_PM, DEMO_PLAN,
 } from './demo.mjs';
 
 const ACHIEVEMENTS = [
@@ -51,6 +51,9 @@ async function route(url, init = {}) {
   if (p === '/api/prs') return json(demoPRs());
   if (p === '/api/allhands') return json(demoStartReviews(body));
   if (p === '/api/reviews') return json(demoReviews());
+  if (p === '/api/brainstorm') return json(demoStartBrainstorm(body));
+  if (p === '/api/brainstorms') return json(demoBrainstormList());
+  if ((m = p.match(/^\/api\/brainstorm\/([\w-]+)$/))) return json(demoBrainstorm(m[1]));
   if (p === '/api/settings') return json({ hiring: { enabled: true, minLevel: 5, maxActive: 3 } });
   if (p === '/api/mcp') return json({ installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
   if (p === '/api/projects') return json(['/home/dev/code/pixel-shop', '/home/dev/code/api-gateway', '/home/dev/code/docs-site']);

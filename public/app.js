@@ -51,6 +51,7 @@ setTheme(themeKey);
 let time = 0;
 let firstLoad = true;
 const standup = { on: false, text: '', running: false };
+const brainstorm = { id: null, ids: new Set(), seen: new Set(), timer: null };
 let employeeOfMonth = null;
 
 let BADGES = {};             // achievement id -> {icon, name, hint}
@@ -368,7 +369,7 @@ class Agent {
     }
     if (this.leaving) return this.leaveOffice();
     // standup: everyone in the office goes to the meeting room, even people who are working
-    if (standup.on) {
+    if (standup.on || brainstorm.ids.has(this.id)) {
       if (this.task !== 'meeting') joinMeeting(this);
       return;
     }
@@ -408,6 +409,7 @@ class Agent {
 
   baseStatus() {
     const s = this.session;
+    if (this.task === 'meeting' && brainstorm.ids.has(this.id)) return this.path.length ? '🚶 Heading to the brainstorm' : '💡 Brainstorming';
     if (this.task === 'meeting') return this.path.length ? '🚶 Heading to the standup' : this.id === 'pm' ? '🧍 Hosting the standup' : '🧍 In the standup';
     if (this.id === 'pm') {
       if (this.thinking) return '💭 Checking on everyone…';
@@ -930,6 +932,99 @@ $('#handoffForm').onsubmit = async e => {
     setTimeout(refresh, 1500);
   } catch (err) { toast(`Could not hand off: ${escapeHtml(err.message)}`); }
 };
+
+// ---------------- brainstorm ----------------
+const firstTitle = text => (String(text).match(/\*\*([^*\n]{3,80})\*\*/) || [])[1] || String(text).split('\n')[0].slice(0, 60);
+async function openBrainstorm() {
+  const f = $('#brainForm');
+  const list = [...agents.values()].filter(a => a.id !== 'pm' && !a.away).sort((a, b) => (b.session.live - a.session.live) || ((b.session.level || 0) - (a.session.level || 0)));
+  $('#brainParts').innerHTML = list.map((a, i) => `<label data-tip="${escapeHtml(a.session.title)}"><input type="checkbox" value="${a.id}" ${i < 5 ? 'checked' : ''}><canvas width="16" height="26" style="width:12px;height:20px" data-av="${a.id}"></canvas><span class="who"><b>${escapeHtml(a.persona.name)}</b><span>${escapeHtml(a.session.project)}</span></span></label>`).join('') || '<p class="muted small">Nobody is in the office. Turn on Show offline, or start a session.</p>';
+  paintAvatars($('#brainParts'));
+  const upd = () => {
+    const n = $('#brainParts').querySelectorAll('input:checked').length, deep = f.deep.checked, rounds = f.reactions.checked ? 2 : 1;
+    $('#brainCount').textContent = `${n} selected (max 8)`;
+    $('#brainEst').textContent = n ? `≈ ${n * rounds + 1} Claude calls, roughly $${(n * rounds * (deep ? 0.6 : 0.06) + 0.05).toFixed(2)}–$${(n * rounds * (deep ? 2 : 0.2) + 0.2).toFixed(2)}` : '';
+  };
+  $('#brainParts').onchange = upd; f.deep.onchange = upd; f.reactions.onchange = upd;
+  $('#brainAll').onclick = () => { $('#brainParts').querySelectorAll('input').forEach((c, i) => { c.checked = i < 8; }); upd(); };
+  $('#brainNone').onclick = () => { $('#brainParts').querySelectorAll('input').forEach(c => { c.checked = false; }); upd(); };
+  upd();
+  try {
+    const past = await (await fetch('/api/brainstorms')).json();
+    $('#brainHistory').hidden = !past.length;
+    $('#brainHistoryList').innerHTML = past.map(b => `<div data-b="${b.id}">${b.status === 'running' ? '⏳' : '💡'} ${escapeHtml(b.topic.slice(0, 90))} <span class="muted small">· ${ago(b.startedAt)}</span></div>`).join('');
+    $('#brainHistoryList').querySelectorAll('[data-b]').forEach(el => el.onclick = async () => { const b = await (await fetch(`/api/brainstorm/${el.dataset.b}`)).json(); $('#brainModal').hidden = true; if (b.status === 'running') followBrainstorm(b); else showBrainResult(b); });
+  } catch {}
+  $('#brainModal').hidden = false;
+  f.topic.focus();
+}
+$('#brainBtn').onclick = openBrainstorm;
+$('#brainForm').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  const participants = [...$('#brainParts').querySelectorAll('input:checked')].map(c => c.value).slice(0, 8);
+  if (!participants.length) return toast('Pick at least one participant.');
+  try {
+    const names = Object.fromEntries(participants.map(id => [id, agents.get(id)?.persona.name]));
+    const b = await post('/api/brainstorm', { topic: f.topic.value.trim(), participants, reactions: f.reactions.checked, deep: f.deep.checked, names });
+    $('#brainModal').hidden = true; f.topic.value = '';
+    followBrainstorm(b);
+    const pm = agents.get('pm'); if (pm && !pm.away) { pm.quip = '💡 Brainstorm time!'; pm.quipT = -4; }
+    toast(`💡 ${participants.length} agent${participants.length > 1 ? 's are' : ' is'} heading to the meeting room.`);
+  } catch (err) { toast(`Could not start the brainstorm: ${escapeHtml(err.message)}`); }
+};
+function followBrainstorm(b) {
+  clearInterval(brainstorm.timer);
+  brainstorm.id = b.id; brainstorm.seen = new Set();
+  brainstorm.ids = new Set(b.participants.map(p => p.id));
+  for (const id of brainstorm.ids) { const a = agents.get(id); if (a && !a.away) { a.task = null; a.path = []; } }
+  $('#brainLive').hidden = false;
+  $('#brainLiveTopic').textContent = b.topic;
+  $('#brainFeed').innerHTML = '';
+  const tick = async () => {
+    let cur;
+    try { cur = await (await fetch(`/api/brainstorm/${b.id}`)).json(); } catch { return; }
+    const stageText = { ideas: `collecting ideas (${Object.keys(cur.ideas || {}).length}/${cur.participants.length})`, reactions: 'reacting to each other', summary: `${agents.get('pm')?.persona.name || 'The PM'} is summing up`, done: 'done' };
+    $('#brainStage').textContent = stageText[cur.stage] || cur.stage;
+    for (const p of cur.participants) {
+      for (const [kind, text] of [['idea', cur.ideas?.[p.id]], ['react', cur.reactions?.[p.id]]]) {
+        const k = `${kind}:${p.id}`;
+        if (!text || brainstorm.seen.has(k)) continue;
+        brainstorm.seen.add(k);
+        const a = agents.get(p.id);
+        const line = kind === 'idea' ? `💡 ${firstTitle(text)}` : `🗣️ ${firstTitle(text.replace(/\*\*Building on:\*\*/i, '')) || 'Building on it'}`;
+        if (a && !a.away) { a.quip = line; a.quipT = -5; }
+        $('#brainFeed').insertAdjacentHTML('afterbegin', `<div><b>${escapeHtml(p.name)}</b>: ${escapeHtml(line.slice(2))}</div>`);
+      }
+    }
+    if (cur.status !== 'running') {
+      clearInterval(brainstorm.timer);
+      brainstorm.ids = new Set();
+      for (const a of agents.values()) if (a.task === 'meeting' && !standup.on) { a.release(); a.task = null; a.path = []; a.timer = rand(0, 2); }
+      $('#brainLive').hidden = true;
+      showBrainResult(cur);
+    }
+  };
+  brainstorm.timer = setInterval(tick, 2000);
+  tick();
+}
+function showBrainResult(b) {
+  $('#brTopic').textContent = `“${b.topic}”`;
+  $('#brSummary').innerHTML = md(b.summary || '');
+  $('#brIdeas').innerHTML = (b.participants || []).map(p => `<div class="idea"><b>${escapeHtml(p.name)}</b>\n${md(b.ideas?.[p.id] || '(no ideas)')}${b.reactions?.[p.id] ? `\n\n${md(b.reactions[p.id])}` : ''}</div>`).join('');
+  const mins = b.at ? Math.max(1, Math.round((b.at - b.startedAt) / 60000)) : null;
+  $('#brMeta').textContent = `${(b.participants || []).map(p => p.name).join(', ')} · facilitated by ${b.facilitator || 'the PM'}${mins ? ` · ${mins} min` : ''}${b.cost ? ` · $${b.cost.toFixed(2)}` : ''}`;
+  $('#brCopy').onclick = () => copy(`Brainstorm: ${b.topic}\n\n${b.summary || ''}`);
+  $('#brBoard').onclick = async () => {
+    const part = (b.summary || '').split(/\*\*Top ideas:\*\*/i)[1] || '';
+    const items = part.split(/\n\s*\*\*[A-Z][^*]*:\*\*/)[0].split('\n').filter(l => /^\s*\d+[.)]/.test(l)).map(l => l.replace(/^\s*\d+[.)]\s*/, '').trim()).slice(0, 6);
+    if (!items.length) return toast('No top ideas found in the summary.');
+    for (const it of items) { const title = firstTitle(it); await post('/api/board', { op: 'add', title: title.slice(0, 200), notes: `${it.replace(/\*\*/g, '')}\n\nFrom the brainstorm: ${b.topic}` }); }
+    loadBoard(); toast(`📋 Added ${items.length} idea${items.length > 1 ? 's' : ''} to the board.`);
+  };
+  $('#brainResult').hidden = false;
+  for (const p of b.participants || []) { const a = agents.get(p.id); if (a && !a.away) celebrate(a); break; }
+}
 
 // ---------------- standup ----------------
 function joinMeeting(a) {
@@ -2456,7 +2551,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '-') return $('#zoomOut').click();
   if (e.key === '0') return setZoom(0);
   const actions = {
-    n: () => { newTodo = null; openNew(); }, d: () => openBoard(), b: () => openTodo(), p: () => openPRs(), s: () => setShowOffline(!showOffline),
+    n: () => { newTodo = null; openNew(); }, d: () => openBoard(), b: () => openTodo(), p: () => openPRs(), i: () => openBrainstorm(), s: () => setShowOffline(!showOffline),
     m: () => (standup.on ? endStandup() : startStandup()), t: () => (replay.on ? stopReplay() : startReplay()),
     o: () => selectedId && openInTerminal(), c: () => selectedId && $('#copyCmd').click(), h: () => selectedId && hideSelected(),
     a: () => { if (selectedId) { document.querySelector('#panel .tabs [data-tab=ask]').click(); $('#askInput').focus(); } },

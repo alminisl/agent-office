@@ -8,7 +8,7 @@ import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp, demoPRs, demoStartReviews, demoReviews } from './demo.mjs';
+import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp, demoPRs, demoStartReviews, demoReviews, demoStartBrainstorm, demoBrainstorm, demoBrainstormList } from './demo.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -574,6 +574,84 @@ async function deleteAgent(id, { trashTranscript = false } = {}) {
   }
   if (!trashed) await setHidden(id, true); // keep it out of the office even though the transcript stays
   return { ok: true, trashed };
+}
+
+// ---------- brainstorm: office agents think about one idea together ----------
+// Round 1: every participant proposes ideas in their own voice (personality + what they work on).
+// Round 2 (optional): everyone reacts to the others' ideas. Then the PM synthesizes.
+// "deep" participants answer from a throwaway fork of their own session (full memory).
+const BRAINSTORMS_FILE = path.join(ROOT, 'data', 'brainstorms.json');
+const brainstorms = new Map(); // id -> live state (also saved to disk when finished)
+const clipText = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
+async function participantBrief(id) {
+  const p = (await loadPersonalities())[id] || {};
+  const d = await sessionDetail(id);
+  return {
+    id, name: p.name || id.slice(0, 8), traits: p.traits || '', cwd: d?.cwd, deepOk: !!d && !d.empty,
+    context: d ? [`You work on the project "${path.basename(d.cwd || '')}". Your current task: "${d.title || 'unknown'}".`,
+      d.prompts?.length ? `The user recently asked you: ${clipText(d.prompts[d.prompts.length - 1].text, 300)}` : '',
+      d.replies?.length ? `You recently said: ${clipText(d.replies[d.replies.length - 1].text, 400)}` : ''].filter(Boolean).join(' ') : '',
+  };
+}
+function askParticipant(part, prompt, deep) {
+  const system = `You are ${part.name}, a coworker in the user's AI office, taking part in a brainstorm.${part.traits ? ` Your personality: ${part.traits}. Speak in character, but keep the ideas genuinely useful.` : ''} ${part.context}`;
+  const args = deep && part.deepOk
+    ? ['-p', prompt, '--resume', part.id, '--fork-session', '--no-session-persistence', '--tools', '', '--append-system-prompt', system]
+    : ['-p', prompt, '--model', process.env.BRAINSTORM_MODEL || 'sonnet', '--no-session-persistence', '--tools', '', '--append-system-prompt', system];
+  return claudeOnce(args, deep && part.deepOk ? part.cwd || os.tmpdir() : os.tmpdir());
+}
+async function saveBrainstorm(b) {
+  await updateJson(BRAINSTORMS_FILE, {}, all => {
+    all[b.id] = b;
+    for (const k of Object.keys(all).sort((x, y) => all[y].startedAt - all[x].startedAt).slice(30)) delete all[k];
+    return all;
+  });
+}
+async function runBrainstorm(b, parts, { reactions, deep }) {
+  const set = (patch) => Object.assign(b, patch);
+  try {
+    // round 1: ideas, all in parallel
+    await Promise.all(parts.map(async part => {
+      const r = await askParticipant(part, `Brainstorm topic from the boss: "${b.topic}"\n\nPropose 3 distinct ideas. For each: a bold short title on its own line (**Title**), then 1-2 sentences on what it is and why it helps. Draw on your own project and experience where relevant. No preamble.`, deep);
+      b.ideas[part.id] = r.text || '(no ideas)'; b.cost += r.cost;
+    }));
+    if (reactions && parts.length > 1) {
+      set({ stage: 'reactions' });
+      const all = parts.map(p => `--- ${p.name} ---\n${clipText(b.ideas[p.id], 1500)}`).join('\n\n');
+      await Promise.all(parts.map(async part => {
+        const r = await askParticipant(part, `Brainstorm topic: "${b.topic}"\n\nHere are everyone's ideas:\n\n${all}\n\nReact briefly in your own voice: "**Building on:**" the one or two ideas from others you like most (say whose, and how you'd improve them), and "**Concern:**" one risk or weakness you see. Max 120 words.`, deep);
+        b.reactions[part.id] = r.text || ''; b.cost += r.cost;
+      }));
+    }
+    set({ stage: 'summary' });
+    const pm = (await loadPersonalities()).pm || {};
+    const transcript = parts.map(p => `### ${p.name}\nIdeas:\n${clipText(b.ideas[p.id], 2000)}${b.reactions[p.id] ? `\nReaction:\n${clipText(b.reactions[p.id], 800)}` : ''}`).join('\n\n');
+    const r = await claudeOnce(['-p', `You facilitated a brainstorm in the office. Topic from the boss: "${b.topic}"\n\n${transcript}\n\n`
+      + 'Write the outcome in markdown: "**In short:**" (2 sentences), "**Top ideas:**" (a numbered list of the 3-5 best ideas, each with its title, who suggested it, and why it stands out), "**Themes:**", "**Open questions:**", and "**Next steps:**" (a short bullet list of concrete actions). Credit people by name. Be concise.',
+    '--model', process.env.PM_MODEL || 'sonnet', '--no-session-persistence', '--tools', '', '--append-system-prompt', PM_SYSTEM(pm.name || 'Morgan', pm.traits)]);
+    b.cost += r.cost;
+    set({ stage: 'done', status: 'done', summary: r.text || '(no summary)', at: Date.now(), facilitator: pm.name || 'Morgan' });
+  } catch (e) {
+    set({ stage: 'done', status: 'failed', summary: `The brainstorm failed: ${e.message}`, at: Date.now() });
+  }
+  await saveBrainstorm(b).catch(() => {});
+}
+async function startBrainstorm({ topic, participants = [], reactions = true, deep = false }) {
+  topic = String(topic || '').trim().slice(0, 1000);
+  if (!topic) throw Object.assign(new Error('What should everyone brainstorm about?'), { status: 400 });
+  const ids = [...new Set(participants)].filter(id => id !== 'pm').slice(0, 8);
+  if (!ids.length) throw Object.assign(new Error('Pick at least one participant.'), { status: 400 });
+  const parts = await Promise.all(ids.map(participantBrief));
+  const b = { id: randomUUID().slice(0, 8), topic, status: 'running', stage: 'ideas', startedAt: Date.now(), participants: parts.map(p => ({ id: p.id, name: p.name })), ideas: {}, reactions: {}, summary: '', cost: 0, reactionsRound: !!reactions, deep: !!deep };
+  brainstorms.set(b.id, b);
+  runBrainstorm(b, parts, { reactions, deep });
+  return b;
+}
+async function getBrainstorm(id) { return brainstorms.get(id) || (await readJson(BRAINSTORMS_FILE, {}).catch(() => ({})))[id] || null; }
+async function listBrainstorms() {
+  const saved = await readJson(BRAINSTORMS_FILE, {}).catch(() => ({}));
+  for (const b of brainstorms.values()) saved[b.id] = b;
+  return Object.values(saved).sort((a, b) => b.startedAt - a.startedAt).slice(0, 20).map(({ id, topic, status, stage, startedAt, participants }) => ({ id, topic, status, stage, startedAt, participants }));
 }
 
 // ---------- TODO board ----------
@@ -1149,6 +1227,9 @@ async function demoRoute(url, req, res) {
   if (url.pathname === '/api/prs') return json(res, 200, demoPRs());
   if (url.pathname === '/api/allhands') return json(res, 200, demoStartReviews(await readBody(req)));
   if (url.pathname === '/api/reviews') return json(res, 200, demoReviews());
+  if (url.pathname === '/api/brainstorm') return json(res, 200, demoStartBrainstorm(await readBody(req)));
+  if (url.pathname === '/api/brainstorms') return json(res, 200, demoBrainstormList());
+  if ((m = url.pathname.match(/^\/api\/brainstorm\/([\w-]+)$/))) return json(res, 200, demoBrainstorm(m[1]));
   if ((m = url.pathname.match(/^\/api\/chat\/([\w-]+)$/))) return json(res, 200, req.method === 'POST' ? demoChatOp(m[1], await readBody(req)) : demoChat(m[1]));
   if (url.pathname === '/api/board') return json(res, 200, req.method === 'POST' ? demoBoardOp(await readBody(req)) : { items: demoBoard() });
   if (url.pathname === '/api/mcp') return json(res, 200, { installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
@@ -1241,6 +1322,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && (m = url.pathname.match(/^\/api\/delete\/([\w-]+)$/))) {
       try { return json(res, 200, await deleteAgent(m[1], await readBody(req))); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
     }
+    if (url.pathname === '/api/brainstorm' && req.method === 'POST') {
+      try { return json(res, 200, await startBrainstorm(await readBody(req))); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
+    }
+    if (url.pathname === '/api/brainstorms') return json(res, 200, await listBrainstorms());
+    if ((m = url.pathname.match(/^\/api\/brainstorm\/([\w-]+)$/))) { const b = await getBrainstorm(m[1]); return b ? json(res, 200, b) : json(res, 404, { error: 'not found' }); }
     if (url.pathname === '/api/prs') return json(res, 200, await listPRs(url.searchParams.has('refresh')));
     if (url.pathname === '/api/reviews') return json(res, 200, await readJson(REVIEWS_FILE, {}).catch(() => ({})));
     if (req.method === 'POST' && url.pathname === '/api/allhands') {
