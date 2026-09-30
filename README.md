@@ -63,7 +63,9 @@ Live status comes from `~/.claude/sessions`:
 
 ### PRs & MRs, and all-hands reviews
 - **🔀 PRs** (<kbd>P</kbd>): the office finds the repos your sessions work in and lists **your open PRs/MRs**, the ones **waiting for your review**, and the latest team ones, using your existing `glab` (GitLab) and `gh` (GitHub) logins. It refreshes every 3 minutes, shows drafts, conflicts, merge status and comments, and links each PR to the agent working on its branch (🔀 on their nameplate).
-- **🚨 All hands review**: tick the PRs/MRs, pick your review skill (`review-mr-light` or `review-mr`), and everyone gathers in the meeting room before reviewer agents get to work. With **cross-check**, two reviewers review each change independently, then their reports are compared: what both found, what only one found, disagreements, and a verdict. You see a rough cost estimate first, at most 4 reviewers run at once, and each PR gets a card on the board.
+- **🚨 All hands review**: tick the PRs/MRs, pick your review skill (`review-mr-light` or `review-mr`) and **how many reviewers** each gets (1–5). Everyone gathers in the meeting room, then the reviewer agents get to work independently. You see a rough cost estimate first, at most 4 reviewers run at once, and each PR gets a card on the board.
+  - **The author joins**: if an agent in the office worked on the PR's branch, it reads the findings and answers as the author: what it accepts, what it would fix, and where it disagrees. It answers from a throwaway copy of its own conversation, so it has full memory of the work while its real session stays untouched.
+  - **A results popup** when each review finishes: the verdict, a summary of what happened (what everyone found, what only some found, disagreements, the author's take, next steps), the author's full response, who reviewed, time and cost, with buttons to open the PR, copy the summary, or add the next steps to the board.
 - Reviewers are **read-only**: they can use the skill, read the PR and the code, and run sub-agents, but they can't comment, approve, check out branches or push.
 
 ### Standups, handoffs and replay

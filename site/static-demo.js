@@ -3,7 +3,7 @@
 // Loaded before app.js by the Pages build (.github/workflows/pages.yml).
 import {
   demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, demoTimeline, demoBoard, demoBoardOp,
-  demoChat, demoChatOp, demoPRs, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, DEMO_PM, DEMO_PLAN,
+  demoChat, demoChatOp, demoPRs, demoStartReviews, demoReviews, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, DEMO_PM, DEMO_PLAN,
 } from './demo.mjs';
 
 const ACHIEVEMENTS = [
@@ -49,7 +49,8 @@ async function route(url, init = {}) {
   if (p === '/api/board') return json(method === 'POST' ? demoBoardOp(body) : { items: demoBoard() });
   if ((m = p.match(/^\/api\/chat\/([\w-]+)$/))) return json(method === 'POST' ? demoChatOp(m[1], body) : demoChat(m[1]));
   if (p === '/api/prs') return json(demoPRs());
-  if (p === '/api/allhands') return json({ started: (body.keys || []).map(key => ({ key, runs: [] })), reviews: (body.keys || []).length * (body.crossCheck ? 2 : 1), demo: true });
+  if (p === '/api/allhands') return json(demoStartReviews(body));
+  if (p === '/api/reviews') return json(demoReviews());
   if (p === '/api/settings') return json({ hiring: { enabled: true, minLevel: 5, maxActive: 3 } });
   if (p === '/api/mcp') return json({ installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
   if (p === '/api/projects') return json(['/home/dev/code/pixel-shop', '/home/dev/code/api-gateway', '/home/dev/code/docs-site']);

@@ -220,7 +220,8 @@ export function demoPRs() {
   const ids = demoSessions().map(s => s.id), now = Date.now(), h = n => now - n * 3600e3;
   const mk = (repo, provider, n, title, kind, extra = {}) => ({ key: `${repo}${provider === 'gitlab' ? '!' : '#'}${n}`, ref: `${provider === 'gitlab' ? '!' : '#'}${n}`, repo, root: `/home/dev/code/${repo.split('/').pop()}`, provider, kind, number: n, title,
     url: `https://${provider}.com/${repo}/-/merge_requests/${n}`, author: kind === 'mine' ? 'you' : 'teammate', draft: false, updatedAt: h(n % 30), createdAt: h(n % 30 + 20), branch: `feat/${n}`, status: 'mergeable', conflicts: false, comments: n % 7, reviewers: [], agentId: null, review: null, ...extra });
-  return {
+  const withReviews = data => { data.items.forEach(i => { if (demoReviewState[i.key]) i.review = demoReviewState[i.key]; }); return data; };
+  return withReviews({
     at: now, errors: [],
     repos: [{ path: 'acme/api-gateway', provider: 'gitlab', name: 'api-gateway' }, { path: 'acme/pixel-shop', provider: 'github', name: 'pixel-shop' }],
     items: [
@@ -231,5 +232,28 @@ export function demoPRs() {
       mk('acme/api-gateway', 'gitlab', 399, 'Upgrade to Go 1.24', 'team', { conflicts: true, status: 'conflict' }),
       mk('acme/pixel-shop', 'github', 90, 'Fix flaky cart tests', 'team'),
     ],
-  };
+  });
+}
+
+// All-hands reviews in demo mode: they "finish" a few seconds after starting
+const demoReviewState = {};
+export function demoStartReviews({ keys = [], reviewers = 2 }) {
+  const per = Math.max(1, Math.min(5, Number(reviewers) || 2));
+  for (const key of keys) demoReviewState[key] = { status: 'running', stage: 'reviewing', reviewersWanted: per, startedAt: Date.now(), doneAt: Date.now() + 9000, key };
+  return { started: keys.map(key => ({ key, runs: [] })), reviews: keys.length * per, demo: true };
+}
+export function demoReviews() {
+  const names = ['Sherlock', 'Marple', 'Poirot', 'Columbo', 'Watson'];
+  for (const [key, r] of Object.entries(demoReviewState)) {
+    if (r.status !== 'running') continue;
+    if (Date.now() > r.doneAt - 4000) r.stage = 'author';
+    if (Date.now() > r.doneAt) Object.assign(r, {
+      status: 'done', stage: 'done', verdict: 'changes requested', cost: 1.12 * r.reviewersWanted, at: Date.now(),
+      reviewers: names.slice(0, r.reviewersWanted).map(name => ({ id: null, name })),
+      author: { id: null, name: 'Margaret', text: '**Valid:** the token bucket does refill with wall-clock time; I will inject a clock.\n\n**I disagree with:** moving the limiter into Redis now. It is out of scope for this MR.\n\n**I will fix:** clock injection, and the shared limiter between tests.' },
+      summary: '**Verdict:** changes requested\n\n**Summary:** All reviewers found the same flaky-time bug, and the author agrees to fix it. One reviewer wants Redis-backed limits, which the author pushes back on as out of scope.\n\n**Everyone found:** `middleware/rate_limit.go:88` refills with wall-clock time, so tests fail on slow CI.\n\n**Only some found:** Marple noticed the limiter is shared between tests; it holds up.\n\n**Disagreements:** Redis now or later. The author is right that it belongs in a follow-up.\n\n**Author\'s take:** accepts the clock and test-isolation fixes; defers Redis.\n\n**Next steps:**\n- Inject a clock into the token bucket\n- Give each test its own limiter\n- Open a follow-up for Redis-backed limits',
+      title: 'Rate limiting middleware', url: 'https://gitlab.com/acme/api-gateway/-/merge_requests/412', ref: '!412', repo: 'acme/api-gateway',
+    });
+  }
+  return demoReviewState;
 }

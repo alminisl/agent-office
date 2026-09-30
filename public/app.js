@@ -655,7 +655,8 @@ function renderPRs() {
   $('#prList').innerHTML = (!prData ? '<p class="muted">Asking GitLab and GitHub…</p>' : '') + list.map(it => {
     const a = it.agentId && agents.get(it.agentId);
     const rv = it.review;
-    const revChip = !rv ? '' : rv.status === 'running' ? '<span class="pill" data-tip="Reviewers are working on it">🔎 reviewing…</span>' : `<span class="pill" data-tip="Result of the all-hands review">✅ ${escapeHtml(rv.verdict || 'reviewed')}</span>`;
+    const stageText = { reviewing: '🔎 reviewing…', author: '📝 author is responding…', summary: '🧾 writing the summary…' };
+    const revChip = !rv ? '' : rv.status === 'running' ? `<span class="pill" data-tip="The all-hands review is in progress">${stageText[rv.stage] || '🔎 reviewing…'}</span>` : `<span class="pill" data-tip="Result of the all-hands review">✅ ${escapeHtml(rv.verdict || 'reviewed')}</span>`;
     return `<div class="pr" data-key="${escapeHtml(it.key)}">
       <input type="checkbox" data-sel ${prSelected.has(it.key) ? 'checked' : ''} data-tip="Include in the all-hands review">
       <div>
@@ -666,7 +667,7 @@ function renderPRs() {
           ${it.comments ? `<span>💬 ${it.comments}</span>` : ''}
           ${a ? `<span class="pill" data-open="${a.id}" data-tip="The agent working on this branch. Click to open their panel.">🧑‍💻 ${escapeHtml(a.persona.name)}</span>` : ''}${revChip}</div>
       </div>
-      <div class="side">${rv?.summary ? '<button data-show>📋 Review</button>' : ''}${(rv?.runs || []).length ? `<button data-reviewers data-tip="Open the reviewers' own reports">🔎 Reviewers</button>` : ''}</div>
+      <div class="side">${rv?.status === 'done' || rv?.status === 'failed' ? '<button data-result>📋 Result</button>' : ''}${rv?.summary ? '<button data-show>▾</button>' : ''}${(rv?.runs || []).length ? `<button data-reviewers data-tip="Open the reviewers' own reports">🔎 Reviewers</button>` : ''}</div>
       ${rv?.summary ? `<div class="rev md" hidden>${md(rv.summary)}</div>` : ''}
     </div>`;
   }).join('') + (prData && !list.length ? `<p class="muted">Nothing here.${prData.errors.length ? ` Errors: ${prData.errors.map(e => escapeHtml(`${e.repo}: ${e.error}`)).join('; ')}` : ''}</p>` : '');
@@ -674,18 +675,20 @@ function renderPRs() {
     const it = items.find(i => i.key === row.dataset.key);
     row.querySelector('[data-sel]').onchange = e => { e.target.checked ? prSelected.add(it.key) : prSelected.delete(it.key); updateAllHands(); };
     const show = row.querySelector('[data-show]'); if (show) show.onclick = () => { const r = row.querySelector('.rev'); r.hidden = !r.hidden; };
+    const res = row.querySelector('[data-result]'); if (res) res.onclick = () => showReviewResult(it.key, it.review);
     const revs = row.querySelector('[data-reviewers]'); if (revs) revs.onclick = () => { const id = it.review.runs.find(x => agents.has(x)); if (id) { $('#prModal').hidden = true; select(id, false); } else toast('The reviewers are not in the office right now (turn on Show offline).'); };
     row.querySelectorAll('[data-open]').forEach(el => el.onclick = () => { $('#prModal').hidden = true; select(el.dataset.open, false); });
   });
   updateAllHands();
 }
 function updateAllHands() {
-  const n = prSelected.size, cross = $('#ahCross').checked, deep = $('#ahSkill').value === 'review-mr';
-  const reviews = n * (cross ? 2 : 1);
+  const n = prSelected.size, per = Number($('#ahCount').value), deep = $('#ahSkill').value === 'review-mr';
+  const reviews = n * per;
+  const withAuthor = $('#ahAuthor').checked ? (prData?.items || []).filter(i => prSelected.has(i.key) && i.agentId).length : 0;
   const [lo, hi] = deep ? [1.5, 4] : [0.4, 1.5];
   $('#ahSel').textContent = n ? `${n} selected → ${reviews} review${reviews > 1 ? 's' : ''}` : 'select PRs/MRs above';
   $('#ahStart').disabled = !n;
-  $('#ahNote').innerHTML = n ? `Rough cost: <b>$${(reviews * lo).toFixed(0)}–$${(reviews * hi).toFixed(0)}</b> on your Claude account (depends on the size of the changes). At most 4 reviewers work at once. Reviewers are read-only: they never comment, approve or push. Each PR gets a card on the board and ${cross ? 'a cross-checked verdict' : 'a report'} here.` : 'Tick the PRs/MRs to review. Everyone gathers in the meeting room, then the reviewers get to work.';
+  $('#ahNote').innerHTML = n ? `Rough cost: <b>$${(reviews * lo).toFixed(0)}–$${(reviews * hi).toFixed(0)}</b> on your Claude account (depends on the size of the changes). At most 4 reviewers work at once, read-only (they never comment, approve or push). ${withAuthor ? `${withAuthor === n ? (n === 1 ? 'It has' : 'All of them have') : `${withAuthor} of them ${withAuthor === 1 ? 'has' : 'have'}`} an author agent in the office who will respond to the findings. ` : $('#ahAuthor').checked ? 'None of these has an author agent in the office, so no author response. ' : ''}When a review is done you get a popup with the verdict and what happened.` : 'Tick the PRs/MRs to review. Everyone gathers in the meeting room, then the reviewers get to work.';
 }
 async function openPRs() {
   $('#prModal').hidden = false;
@@ -697,12 +700,13 @@ async function openPRs() {
 $('#prBtn').onclick = openPRs;
 $('#prRefresh').onclick = () => { $('#prMeta').textContent = 'Refreshing…'; loadPRs(true); };
 document.querySelectorAll('#prTabs button').forEach(b => b.onclick = () => { prTab = b.dataset.pr; renderPRs(); });
-$('#ahSkill').onchange = updateAllHands; $('#ahCross').onchange = updateAllHands;
+$('#ahSkill').onchange = updateAllHands; $('#ahCount').onchange = updateAllHands; $('#ahAuthor').onchange = updateAllHands;
 $('#ahStart').onclick = async () => {
   const keys = [...prSelected];
   $('#ahStart').disabled = true;
   try {
-    const r = await post('/api/allhands', { keys, skill: $('#ahSkill').value, crossCheck: $('#ahCross').checked });
+    const r = await post('/api/allhands', { keys, skill: $('#ahSkill').value, reviewers: Number($('#ahCount').value), includeAuthor: $('#ahAuthor').checked });
+    watchReviews = true;
     $('#prModal').hidden = true;
     allHandsGather();
     toast(`🚨 All hands! ${r.reviews} review${r.reviews > 1 ? 's' : ''} on ${keys.length} PR/MR${keys.length > 1 ? 's' : ''}. Reviewers are on their way.`);
@@ -720,6 +724,50 @@ function allHandsGather() {
   setTimeout(endStandup, 14000);
 }
 setInterval(() => loadPRs(), 3 * 60e3);
+
+// follow running reviews, and pop up the result when one finishes
+let reviewState = null, watchReviews = false;
+const popupQueue = [];
+async function pollReviews() {
+  let now;
+  try { now = await (await fetch('/api/reviews')).json(); } catch { return; }
+  const running = Object.values(now).some(r => r.status === 'running');
+  if (reviewState) for (const [key, r] of Object.entries(now)) {
+    const prev = reviewState[key];
+    if (r.status === 'running' && r.stage === 'author' && prev?.stage !== 'author' && r.authorId) {
+      const a = agents.get(r.authorId); if (a && !a.away) { a.quip = '📝 Answering the review'; a.quipT = -5; }
+    }
+    if (prev?.status === 'running' && r.status !== 'running') { popupQueue.push([key, r]); const a = agents.get(r.authorId); if (a && !a.away) celebrate(a, r.status === 'done'); }
+  }
+  reviewState = now;
+  if (popupQueue.length && $('#reviewModal').hidden) showReviewResult(...popupQueue.shift());
+  if (!$('#prModal').hidden && (running || watchReviews)) loadPRs();
+  watchReviews = running;
+}
+setInterval(pollReviews, 5000);
+function verdictClass(v = '') { v = v.toLowerCase(); return /approve(?! with)|lgtm/.test(v) ? 'good' : /nit|discussion|single/.test(v) ? 'warn' : 'bad'; }
+function showReviewResult(key, r) {
+  const mins = r.at && r.startedAt ? Math.max(1, Math.round((r.at - r.startedAt) / 60000)) : null;
+  $('#rvTitle').textContent = r.status === 'failed' ? '⚠️ Review failed' : '✅ Review finished';
+  $('#rvHead').innerHTML = `<b>${escapeHtml(`${(r.repo || key).split('/').pop()}${r.ref || ''}`)}</b><span>${escapeHtml(r.title || '')}</span><span class="verdict ${verdictClass(r.verdict)}">${escapeHtml(r.verdict || '')}</span>`;
+  $('#rvSummary').innerHTML = md(r.summary || '');
+  $('#rvAuthorBox').hidden = !r.author?.text;
+  if (r.author?.text) { $('#rvAuthorTitle').textContent = `📝 ${r.author.name} (the author) responded`; $('#rvAuthor').innerHTML = md(r.author.text); }
+  const people = (r.reviewers || []).map(p => `<span class="pill" data-agent="${p.id || ''}" data-tip="Open ${escapeHtml(p.name)}'s full review">🔎 ${escapeHtml(p.name)}</span>`).join('');
+  $('#rvPeople').innerHTML = `${people ? `Reviewed by ${people}` : ''}${r.author ? ` · author <span class="pill" data-agent="${r.author.id || ''}">📝 ${escapeHtml(r.author.name)}</span>` : ''}${mins ? ` · took ${mins} min` : ''}${r.cost ? ` · cost $${r.cost.toFixed(2)}` : ''}`;
+  $('#rvPeople').querySelectorAll('[data-agent]').forEach(el => el.onclick = () => { if (el.dataset.agent && agents.has(el.dataset.agent)) { $('#reviewModal').hidden = true; select(el.dataset.agent, false); } else toast('That agent is not in the office right now (try Show offline).'); });
+  $('#rvOpen').href = r.url || '#';
+  $('#rvCopy').onclick = () => copy(r.summary || '');
+  $('#rvFollow').onclick = async () => {
+    const steps = ((r.summary || '').split(/\*\*Next steps:\*\*/i)[1] || '').split('\n').map(l => l.replace(/^\s*[-*\d.]+\s*/, '').trim()).filter(Boolean).slice(0, 6);
+    if (!steps.length) return toast('No next steps found in the summary.');
+    for (const t of steps) await post('/api/board', { op: 'add', title: t.slice(0, 200), project: (r.repo || '').split('/').pop(), notes: `From the review of ${r.url || key}` });
+    loadBoard(); toast(`📋 Added ${steps.length} card${steps.length > 1 ? 's' : ''} to the board.`);
+  };
+  $('#rvMore').textContent = popupQueue.length ? `${popupQueue.length} more review${popupQueue.length > 1 ? 's' : ''} finished; they open after this one.` : '';
+  $('#reviewModal').hidden = false;
+}
+new MutationObserver(() => { if ($('#reviewModal').hidden && popupQueue.length) setTimeout(() => popupQueue.length && $('#reviewModal').hidden && showReviewResult(...popupQueue.shift()), 400); }).observe($('#reviewModal'), { attributes: true, attributeFilter: ['hidden'] });
 
 // ---------------- TODO board ----------------
 let boardItems = [];

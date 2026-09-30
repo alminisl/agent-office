@@ -336,11 +336,24 @@
           <b>🚨 All hands review</b>
           <span id="ahSel" class="muted small"></span>
           <label data-tip="Which of your review skills the reviewers use">Skill <select id="ahSkill"><option value="review-mr-light">review-mr-light (fast)</option><option value="review-mr">review-mr (deep PM report)</option></select></label>
-          <label class="toggle" data-tip="Two reviewers review each PR independently, then their reports are compared: what both found, what only one found, disagreements, and a verdict."><input type="checkbox" id="ahCross" checked> Cross-check (2 reviewers each)</label>
+          <label data-tip="How many agents review each PR/MR independently. With 2 or more, their reports are compared: what everyone found, what only some found, disagreements, and a verdict.">Reviewers per PR <select id="ahCount"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label class="toggle" data-tip="If an agent in the office worked on the PR's branch, it reads the findings and answers as the author: what it accepts, what it would fix, where it disagrees. It answers from a copy of its own conversation, so its real session is untouched."><input type="checkbox" id="ahAuthor" checked> Author joins</label>
           <button id="ahStart" class="primary">🚨 Start</button>
         </div>
         <p id="ahNote" class="muted small"></p>
       </div>
+    </div>
+  </div>
+
+  <div id="reviewModal" class="modal" hidden>
+    <div class="card review-done">
+      <div class="board-head"><h2 id="rvTitle">✅ Review finished</h2><button class="icon" data-close title="Close (Esc)">✕</button></div>
+      <div id="rvHead"></div>
+      <div id="rvSummary" class="md rv-summary"></div>
+      <details id="rvAuthorBox" hidden><summary id="rvAuthorTitle"></summary><div id="rvAuthor" class="md rv-author"></div></details>
+      <div id="rvPeople" class="rv-people"></div>
+      <div class="row"><a id="rvOpen" class="btn-link" target="_blank" rel="noopener">Open the PR/MR ↗</a><button id="rvFollow" data-tip="Turn the next steps into cards on the board">📋 Add next steps to the board</button><button id="rvCopy">Copy summary</button><button class="primary" data-close>Close</button></div>
+      <p id="rvMore" class="muted small"></p>
     </div>
   </div>
 

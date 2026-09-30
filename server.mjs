@@ -8,7 +8,7 @@ import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp, demoPRs } from './demo.mjs';
+import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp, demoPRs, demoStartReviews, demoReviews } from './demo.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -395,54 +395,93 @@ function pumpReviews() {
 }
 const updateReview = (key, change) => updateJson(REVIEWS_FILE, {}, all => { all[key] = change(all[key] || {}); return all[key]; });
 
-async function reconcile(key, pr, ids) {
-  const reports = [];
-  for (const id of ids) { const r = await loadReport(id); if (r?.ok) reports.push({ name: r.name, text: r.result }); }
-  if (reports.length < 2) return updateReview(key, v => ({ ...v, status: reports.length ? 'done' : 'failed', verdict: reports.length ? 'single review' : 'failed', at: Date.now() }));
-  const prompt = `Two reviewers independently reviewed ${pr.provider === 'gitlab' ? 'merge request' : 'pull request'} ${pr.repo}${pr.ref} "${pr.title}".\n\n${reports.map((r, i) => `--- Review ${i + 1} (by ${r.name}) ---\n${r.text.slice(0, 12000)}`).join('\n\n')}\n\n`
-    + 'Cross-check them. Reply in markdown: a first line "**Verdict:** approve / approve with nits / changes requested / needs discussion", then "**Both found:**" (issues both reviewers agree on), "**Only one found:**" (say who, and whether you think it holds up), "**Disagreements:**", and "**Next steps:**". Be concise and concrete, keep file:line references. Do not invent issues neither reviewer mentioned.';
-  const out = await new Promise(resolve => {
-    const child = spawn(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, '--model', process.env.PM_MODEL || 'sonnet', '--no-session-persistence', '--tools', '', '--output-format', 'text'], { cwd: os.tmpdir(), env: FAST_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
-    let o = ''; child.stdout.on('data', d => { o += d; }); child.on('close', () => resolve(o.trim())); child.on('error', () => resolve(''));
+// one-shot claude call that returns { text, cost } (JSON output gives us the cost)
+function claudeOnce(args, cwd = os.tmpdir()) {
+  return new Promise(resolve => {
+    const child = spawn(process.env.CLAUDE_BIN || 'claude', [...args, '--output-format', 'json'], { cwd, env: FAST_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+    let o = '';
+    child.stdout.on('data', d => { o += d; });
+    child.on('error', () => resolve({ text: '', cost: 0 }));
+    child.on('close', () => { try { const d = JSON.parse(o); resolve({ text: String(d.result || '').trim(), cost: d.total_cost_usd || 0 }); } catch { resolve({ text: o.trim(), cost: 0 }); } });
   });
-  const verdict = (out.match(/\*\*Verdict:\*\*\s*([^\n]+)/i)?.[1] || 'see summary').trim();
-  return updateReview(key, v => ({ ...v, status: 'done', verdict, summary: out || '(the cross-check produced no output)', at: Date.now() }));
+}
+const kindOf = pr => (pr.provider === 'gitlab' ? 'merge request' : 'pull request');
+
+// The agent who wrote the change answers the reviewers, from a throwaway fork of its own session
+// (full memory of the work, and its real conversation is never touched).
+async function authorResponds(key, pr, authorId, reports) {
+  await updateReview(key, v => ({ ...v, stage: 'author' }));
+  const author = (await loadPersonalities())[authorId]?.name || 'the author';
+  const prompt = `Reviewers just reviewed your work on ${kindOf(pr)} ${pr.repo}${pr.ref} "${pr.title}" (branch ${pr.branch}). Their reports:\n\n`
+    + reports.map((r, i) => `--- Reviewer ${i + 1}: ${r.name} ---\n${r.text.slice(0, 10000)}`).join('\n\n')
+    + '\n\nAs the author, respond to the findings in markdown. For each substantive finding say whether it is valid, what you would change, or why you disagree (with evidence from the work you did). End with "**I will fix:**" and "**I disagree with:**" lists. Be concise and honest; do not make changes now.';
+  const r = await claudeOnce(['-p', prompt, '--resume', authorId, '--fork-session', '--no-session-persistence', '--tools', '', '--append-system-prompt', `You are ${author}, the engineer who wrote this change, answering a code review in the user's AI office.`]);
+  return { name: author, text: r.text, cost: r.cost };
+}
+
+async function finishReview(key, pr, ids, authorId) {
+  const reports = [];
+  let cost = 0;
+  for (const id of ids) { const r = await loadReport(id); cost += r?.cost || 0; if (r?.ok) reports.push({ id, name: r.name, text: r.result }); }
+  if (!reports.length) return updateReview(key, v => ({ ...v, status: 'failed', stage: 'done', verdict: 'reviews failed', summary: 'None of the reviewers could finish. Open their panels for the errors.', cost, at: Date.now() }));
+  let author = null;
+  if (authorId) { author = await authorResponds(key, pr, authorId, reports).catch(() => null); cost += author?.cost || 0; }
+  await updateReview(key, v => ({ ...v, stage: 'summary' }));
+  const prompt = `${reports.length} reviewer${reports.length > 1 ? 's' : ''} independently reviewed ${kindOf(pr)} ${pr.repo}${pr.ref} "${pr.title}".\n\n`
+    + reports.map((r, i) => `--- Review ${i + 1} (by ${r.name}) ---\n${r.text.slice(0, 12000)}`).join('\n\n')
+    + (author?.text ? `\n\n--- The author (${author.name}) responded ---\n${author.text.slice(0, 8000)}` : '')
+    + '\n\nWrite the final review summary in markdown. First line: "**Verdict:** approve / approve with nits / changes requested / needs discussion". Then "**Summary:**" (2-3 sentences on what happened in this review)'
+    + (reports.length > 1 ? ', "**Everyone found:**", "**Only some found:**" (say who, and whether it holds up), "**Disagreements:**"' : ', "**Findings:**"')
+    + (author?.text ? ', "**Author\'s take:**" (what the author accepts and pushes back on, and who is right)' : '')
+    + ', and "**Next steps:**" as a short bullet list. Be concise and concrete, keep file:line references, and do not invent issues nobody raised.';
+  const sum = await claudeOnce(['-p', prompt, '--model', process.env.PM_MODEL || 'sonnet', '--no-session-persistence', '--tools', '']);
+  cost += sum.cost;
+  const verdict = (sum.text.match(/\*\*Verdict:\*\*\s*([^\n]+)/i)?.[1] || 'see summary').trim();
+  const review = await updateReview(key, v => ({ ...v, status: 'done', stage: 'done', verdict, summary: sum.text || '(no summary)', author: author ? { id: authorId, name: author.name, text: author.text } : null, reviewers: reports.map(r => ({ id: r.id, name: r.name })), cost, at: Date.now() }));
+  if (review.cardId) await boardOp('update', { id: review.cardId, status: 'done', note: `Verdict: ${verdict}` }).catch(() => {});
+  return review;
 }
 
 const REVIEWER_NAMES = ['Sherlock', 'Marple', 'Poirot', 'Columbo', 'Watson', 'Holmes', 'Lestrade', 'Morse', 'Vera', 'Luther', 'Monk', 'Magnum'];
-async function startReviews({ keys = [], skill = 'review-mr-light', crossCheck = true }) {
+const REVIEWER_PRESETS = ['detective', 'perfectionist', 'senior', 'oscar', 'angela'];
+async function startReviews({ keys = [], skill = 'review-mr-light', reviewers = 2, includeAuthor = true }) {
   if (!REVIEW_SKILLS.includes(skill)) skill = 'review-mr-light';
+  const per = Math.max(1, Math.min(5, Number(reviewers) || 2));
   const data = await listPRs();
   const prs = data.items.filter(p => keys.includes(p.key));
   if (!prs.length) throw Object.assign(new Error('No matching PRs/MRs.'), { status: 400 });
-  if (prs.length > 12) throw Object.assign(new Error('That is a lot of reviews at once. Pick at most 12.'), { status: 400 });
+  if (prs.length * per > 20) throw Object.assign(new Error(`That is ${prs.length * per} reviews at once. Keep it to 20 or fewer.`), { status: 400 });
   const personalities = await loadPersonalities();
   const used = new Set(Object.values(personalities).map(p => p.name));
   const names = REVIEWER_NAMES.filter(n => !used.has(n));
   let n = 0;
   const started = [];
   for (const pr of prs) {
-    const per = crossCheck ? 2 : 1, ids = [];
+    const ids = [];
+    const authorId = includeAuthor && pr.agentId ? pr.agentId : null;
     for (let k = 0; k < per; k++) {
       const id = randomUUID();
-      const name = names[n % Math.max(1, names.length)] ? `${names[n % names.length]}${n >= names.length ? ` ${Math.floor(n / names.length) + 1}` : ''}` : `Reviewer ${n + 1}`;
+      const base = names.length ? names[n % names.length] : 'Reviewer';
+      const name = names.length && n < names.length ? base : `${base} ${n + 1}`;
       n++;
-      const persona = { name, preset: k === 0 ? 'detective' : 'perfectionist', role: 'reviewer', hangout: 'lounge', impact: true, auto: false, allHands: true, reviewOf: pr.key };
+      const persona = { name, preset: REVIEWER_PRESETS[k % REVIEWER_PRESETS.length], role: 'reviewer', hangout: 'lounge', impact: true, auto: false, allHands: true, reviewOf: pr.key };
       persona.workStyle = `You are "${name}", a reviewer in the user's AI office.`;
       await savePersonality(id, persona);
       ids.push(id);
-      const prompt = `Use the ${skill} skill to review ${pr.provider === 'gitlab' ? 'merge request' : 'pull request'} ${pr.url} ("${pr.title}").\n\n`
-        + `This is part of an automated "all hands" review in Agent Office${crossCheck ? ', and another reviewer is reviewing the same change independently' : ''}. `
+      const prompt = `Use the ${skill} skill to review ${kindOf(pr)} ${pr.url} ("${pr.title}").\n\n`
+        + `This is part of an automated "all hands" review in Agent Office${per > 1 ? `, and ${per - 1} other reviewer${per > 2 ? 's are' : ' is'} reviewing the same change independently` : ''}. `
         + 'Report only: never post comments, approve, merge, check out branches or change anything. Your final message is your review report.';
-      reviewQueue.push({ id, cwd: pr.root, prompt, persona, role: 'prreview', onDone: () => { if (ids.length === per && ids.every(x => runs.get(x) && runs.get(x).state !== 'running')) reconcile(pr.key, pr, ids); } });
+      reviewQueue.push({ id, cwd: pr.root, prompt, persona, role: 'prreview', onDone: () => {
+        if (ids.length === per && ids.every(x => runs.get(x) && runs.get(x).state !== 'running')) finishReview(pr.key, pr, ids, authorId).catch(() => {});
+      } });
     }
-    await updateReview(pr.key, () => ({ status: 'running', skill, crossCheck, runs: ids, startedAt: Date.now(), title: pr.title, url: pr.url }));
-    await boardOp('add', { title: `Review ${pr.repo.split('/').pop()}${pr.ref}: ${pr.title}`.slice(0, 200), project: path.basename(pr.root), status: 'doing', sessionId: ids[0], notes: `${pr.url}\nAll-hands review with ${skill}${crossCheck ? ', cross-checked by two reviewers' : ''}.` }, 'All hands').catch(() => {});
-    started.push({ key: pr.key, runs: ids });
+    const card = await boardOp('add', { title: `Review ${pr.repo.split('/').pop()}${pr.ref}: ${pr.title}`.slice(0, 200), project: path.basename(pr.root), status: 'doing', notes: `${pr.url}\nAll-hands review with ${skill} by ${per} reviewer${per > 1 ? 's' : ''}${authorId ? ', with the author responding' : ''}.` }, 'All hands').catch(() => null);
+    await updateReview(pr.key, () => ({ status: 'running', stage: 'reviewing', skill, reviewersWanted: per, runs: ids, authorId, startedAt: Date.now(), title: pr.title, url: pr.url, ref: pr.ref, repo: pr.repo, cardId: card?.id || null }));
+    started.push({ key: pr.key, runs: ids, authorId });
   }
   pumpReviews();
   prCache.at = 0;
-  return { started, reviews: started.length * (crossCheck ? 2 : 1) };
+  return { started, reviews: started.length * per };
 }
 
 // ---------- the Product Manager: knows what everyone in the office is doing ----------
@@ -1108,7 +1147,8 @@ async function demoRoute(url, req, res) {
   }
   if (url.pathname === '/api/pm/plan') return json(res, 200, DEMO_PLAN);
   if (url.pathname === '/api/prs') return json(res, 200, demoPRs());
-  if (url.pathname === '/api/allhands') { const b = await readBody(req); return json(res, 200, { started: (b.keys || []).map(key => ({ key, runs: [] })), reviews: (b.keys || []).length * (b.crossCheck ? 2 : 1), demo: true }); }
+  if (url.pathname === '/api/allhands') return json(res, 200, demoStartReviews(await readBody(req)));
+  if (url.pathname === '/api/reviews') return json(res, 200, demoReviews());
   if ((m = url.pathname.match(/^\/api\/chat\/([\w-]+)$/))) return json(res, 200, req.method === 'POST' ? demoChatOp(m[1], await readBody(req)) : demoChat(m[1]));
   if (url.pathname === '/api/board') return json(res, 200, req.method === 'POST' ? demoBoardOp(await readBody(req)) : { items: demoBoard() });
   if (url.pathname === '/api/mcp') return json(res, 200, { installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
@@ -1202,6 +1242,7 @@ const server = http.createServer(async (req, res) => {
       try { return json(res, 200, await deleteAgent(m[1], await readBody(req))); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
     }
     if (url.pathname === '/api/prs') return json(res, 200, await listPRs(url.searchParams.has('refresh')));
+    if (url.pathname === '/api/reviews') return json(res, 200, await readJson(REVIEWS_FILE, {}).catch(() => ({})));
     if (req.method === 'POST' && url.pathname === '/api/allhands') {
       try { return json(res, 200, await startReviews(await readBody(req))); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
     }
