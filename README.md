@@ -159,7 +159,7 @@ There is nothing to install: no dependencies, no build step.
 
 ## How it works
 
-- **Sessions** come from the transcripts in `~/.claude/projects/**.jsonl` (the last 14 days, up to 20 cubicles; running sessions are always shown). Transcripts are parsed for titles, prompts, replies, tool calls, files, lines changed, PRs, cost and context usage, and cached by modification time.
+- **Sessions** are the background jobs that Claude Code's agents view lists (`~/.claude/jobs/<id>/state.json`), plus the office's own background agents. Interactive sessions and Claude Code's spare processes are not shown. Each job's transcript in `~/.claude/projects/**.jsonl` gives the details. Transcripts are parsed for titles, prompts, replies, tool calls, files, lines changed, PRs, cost and context usage, and cached by modification time.
 - **Live status** comes from `~/.claude/sessions`, which tells the office which sessions are running, busy or waiting.
 - **Helpers** are the subagent transcripts of a running session that were touched in the last 45 seconds.
 - **Ask** has two modes, and both stream the answer word by word:
@@ -187,8 +187,6 @@ All settings are optional environment variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `4747` | Port to serve the office on |
-| `MAX_DAYS` | `14` | How many days back to look for sessions |
-| `MAX_ROOMS` | `20` | Maximum number of cubicles |
 | `CLAUDE_DIR` | `~/.claude` | Where Claude Code keeps its data |
 | `CLAUDE_BIN` | `claude` | The Claude Code executable |
 | `OFFICE_TERMINAL` | macOS: `iTerm` if you run inside iTerm, else `Terminal`. Linux: the first of gnome-terminal, kitty, konsole, alacritty, wezterm, xfce4-terminal, xterm found on your PATH | Terminal used by New session, Open in terminal and handoffs |
@@ -199,7 +197,7 @@ All settings are optional environment variables:
 | `CONTEXT_WINDOW` | `200000` (or 1M for `[1m]` models) | Context window size used for the context bar |
 | `DEMO` | unset | Set to `1` for demo mode (same as `--demo`) |
 
-Example: `PORT=8080 MAX_DAYS=7 npm start`
+Example: `PORT=8080 npm start`
 
 ## Keyboard shortcuts
 

@@ -1482,7 +1482,7 @@ function renderEmptyState() {
     $('#emptyTitle').textContent = 'No coworkers yet';
     $('#emptyText').innerHTML = setup && !setup.claudeDirFound
       ? `Agent Office didn't find any Claude Code data in <code>${escapeHtml(setup.claudeDir)}</code>. Use Claude Code once (or set <code>CLAUDE_DIR</code>), and your sessions will show up here.`
-      : `No Claude Code sessions from the last ${setup?.maxDays || 14} days. Start one and they'll walk in through the elevator.`;
+      : 'No background jobs in the Claude Code agents view. Start one and they\'ll walk in through the elevator.';
     $('#emptyActions').innerHTML = '<button class="primary" id="emptyNew">＋ Start a session</button><a class="btn-link" href="https://alminisl.github.io/agent-office/demo/" target="_blank" rel="noopener">🎮 See the demo office</a>';
   }
   $('#emptyNew').onclick = () => openNew();
@@ -2204,7 +2204,7 @@ function renderOverview() {
   const section = (title, desc) => `<h3>${title}</h3><p class="section-desc">${desc}</p>`;
   pane.innerHTML = `
     <div class="kv overview-cards">
-      ${card(list.length, `employees (${live.length} in office)`, `Every Claude Code session from the last ${config.maxDays} days (up to ${config.maxRooms}), plus any that are running now. <i>In office</i> means its <code>claude</code> process is running.`)}
+      ${card(list.length, `employees (${live.length} in office)`, `Every background job in the Claude Code agents view, plus the office's own background agents. <i>In office</i> means its <code>claude</code> process is running.`)}
       ${card(busy.length, 'working right now', 'Sessions where Claude is writing a reply or running a tool at this moment.')}
       ${card(money(sum('cost')), 'total spend', 'What these sessions cost, as recorded by Claude Code (the same numbers <code>/cost</code> shows). Sessions with no recorded cost count as $0.')}
       ${card(money(workH ? sum('cost') / workH : 0), 'per hour of work', 'Total spend divided by hands-on work time: roughly what one hour of an agent actually working costs.')}
@@ -2309,7 +2309,7 @@ function renderSettings() {
   $('#setTheme').value = themeKey;
   $('#setLighting').value = lightingMode;
   $('#setYourTurn').value = String(YOUR_TURN_MS / 60000);
-  $('#setInfo').innerHTML = `Terminal: <b>${escapeHtml(config.terminal)}</b> · showing sessions from the last <b>${config.maxDays}</b> days (max <b>${config.maxRooms}</b>). Change with <code>MAX_DAYS</code>, <code>MAX_ROOMS</code> and <code>OFFICE_TERMINAL</code> when starting the server.`;
+  $('#setInfo').innerHTML = `Terminal: <b>${escapeHtml(config.terminal)}</b> · showing the background jobs from the Claude Code agents view. Change the terminal with <code>OFFICE_TERMINAL</code> when starting the server.`;
 }
 
 function renderBoard() {

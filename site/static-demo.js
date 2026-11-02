@@ -32,7 +32,7 @@ async function route(url, init = {}) {
   const body = init.body ? JSON.parse(init.body) : {};
   const p = url.pathname.replace(/^.*\/api\//, '/api/');
   let m;
-  if (p === '/api/config') return json({ terminal: 'your terminal', maxDays: 14, maxRooms: 20, achievements: ACHIEVEMENTS, ranks: RANKS, demo: true });
+  if (p === '/api/config') return json({ terminal: 'your terminal', achievements: ACHIEVEMENTS, ranks: RANKS, demo: true });
   if (p === '/api/sessions') return json(demoSessions().map(s => ({ ...s, personality: personalities[s.id] || s.personality })));
   if ((m = p.match(/^\/api\/session\/([\w-]+)$/))) { const d = demoDetail(m[1], ACHIEVEMENTS); return d ? json({ ...d, personality: personalities[d.id] || d.personality }) : json({ error: 'not found' }, 404); }
   if (p === '/api/personalities') { const r = demoSavePersonalities(body); Object.assign(personalities, r); return json(r); }
@@ -58,7 +58,7 @@ async function route(url, init = {}) {
   if (p === '/api/mcp') return json({ installed: false, demo: true, command: 'claude mcp add --scope user agent-office -- node /path/to/agent-office/mcp.mjs' });
   if (p === '/api/projects') return json(['/home/dev/code/pixel-shop', '/home/dev/code/api-gateway', '/home/dev/code/docs-site']);
   if (p === '/api/hidden') return json([]);
-  if (p === '/api/setup') return json({ demo: true, claudeDirFound: true, transcripts: 14, live: 10, claudeCli: 'demo', terminal: 'your terminal', mcpConnected: false, customPersonalities: 0, boardCards: demoBoard().length, maxDays: 14 });
+  if (p === '/api/setup') return json({ demo: true, claudeDirFound: true, transcripts: 14, live: 10, claudeCli: 'demo', terminal: 'your terminal', mcpConnected: false, customPersonalities: 0, boardCards: demoBoard().length });
   if (/^\/api\/(new|open|end|handoff|send|pm\/session)/.test(p)) return json(NOT_HERE, 501);
   return json({ ok: true, demo: true });
 }

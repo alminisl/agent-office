@@ -15,6 +15,7 @@ const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 const LIVE_DIR = path.join(CLAUDE_DIR, 'sessions');
+const JOBS_DIR = path.join(CLAUDE_DIR, 'jobs'); // background jobs: the agents view lists each folder with a state.json
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = process.env.OFFICE_DATA_DIR || path.join(ROOT, 'data'); // tests point this at a temp folder
@@ -34,8 +35,6 @@ const TERMINAL = process.env.OFFICE_TERMINAL
   || (process.platform === 'darwin'
     ? (process.env.TERM_PROGRAM === 'iTerm.app' ? 'iTerm' : 'Terminal')
     : LINUX_TERMINALS.find(onPath) || 'xterm');
-const MAX_DAYS = Number(process.env.MAX_DAYS || 14);
-const MAX_ROOMS = Number(process.env.MAX_ROOMS || 20);
 const DEMO = process.env.DEMO === '1' || process.argv.includes('--demo');
 
 // ---------- transcript parsing (cached by mtime) ----------
@@ -788,7 +787,7 @@ async function setupStatus() {
     transcripts: transcripts.length, live: live.size, claudeCli: cli,
     terminal: TERMINAL, platform: process.platform, mcpConnected,
     customPersonalities: Object.values(personalities).filter(p => !p.auto).length,
-    boardCards: (board.items || []).length, maxDays: MAX_DAYS,
+    boardCards: (board.items || []).length,
   };
 }
 
@@ -851,51 +850,52 @@ async function allTranscripts() {
   return files;
 }
 
-async function listSessions() {
-  const [files, live, personalities, hidden] = await Promise.all([allTranscripts(), liveSessions(), loadPersonalities(), loadHidden()]);
-  for (const [id, run] of runs) { const l = runAsLive(id, run); if (l && !live.has(id)) live.set(id, l); }
-  const cutoff = Date.now() - MAX_DAYS * 86400e3;
-  const stats = await Promise.all(files.map(async f => ({ f, st: await fsp.stat(f).catch(() => null) })));
-  const candidates = stats
-    .filter(x => x.st && (x.st.mtimeMs >= cutoff || live.has(path.basename(x.f, '.jsonl'))))
-    .sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
+// Background jobs exactly as Claude Code's agents view lists them: every jobs/<jobId>/state.json.
+// Its sessionId links the job to its transcript and live status file.
+async function backgroundJobs() {
+  const out = new Map(); // session id -> { jobId, name }
+  let names = [];
+  try { names = await fsp.readdir(JOBS_DIR); } catch { return out; }
+  for (const jobId of names) {
+    try {
+      const d = JSON.parse(await fsp.readFile(path.join(JOBS_DIR, jobId, 'state.json'), 'utf8'));
+      if (typeof d.sessionId === 'string' && d.sessionId) out.set(d.sessionId, { jobId, name: d.name });
+    } catch {} // no state.json (e.g. a spare process's folder) or a broken one: not a job
+  }
+  return out;
+}
 
-  const sessions = [];
-  const seen = new Set();
+// The office shows what the agents view shows: background jobs, plus the office's own runs.
+// Interactive sessions, spare processes and old transcripts stay out.
+async function listSessions() {
+  const [files, liveAll, jobs, personalities, hidden] = await Promise.all([allTranscripts(), liveSessions(), backgroundJobs(), loadPersonalities(), loadHidden()]);
+  for (const [id, run] of runs) { const l = runAsLive(id, run); if (l && !liveAll.has(id)) liveAll.set(id, l); }
+  const ids = [...new Set([...jobs.keys(), ...runs.keys()])].filter(id => !hidden.includes(id));
+  const fileFor = new Map(files.map(f => [path.basename(f, '.jsonl'), f]));
   const reports = new Map();
   try { for (const f of await fsp.readdir(REPORTS_DIR)) if (f.endsWith('.json')) reports.set(f.slice(0, -5), await loadReport(f.slice(0, -5))); } catch {}
-  const push = async (id, s, l) => {
-    seen.add(id);
+  const sessions = await Promise.all(ids.map(async id => {
+    const job = jobs.get(id), l = liveAll.get(id) || null;
+    const s = fileFor.has(id) ? await parseTranscript(fileFor.get(id)) : {};
     const g = s.file ? gamify(s) : null;
     const helpers = l && s.file ? await activeHelpers(s) : [];
     const where = await projectFor({ cwd: s.cwd || l?.cwd, editDirs: s.editDirs });
-    sessions.push({
+    const updatedAt = s.updatedAt || l?.startedAt || runs.get(id)?.startedAt;
+    return {
       ...g, helpers,
-      id, cwd: s.cwd || l?.cwd, project: where.project, repoRoot: where.repoRoot, repos: where.repos, projectSource: where.source,
-      title: titleFor(s, l), kind: l?.kind ?? null, jobId: l?.jobId ?? null,
-      lastPrompt: s.lastPrompt, gitBranch: s.gitBranch, updatedAt: s.updatedAt || l?.startedAt,
+      id, cwd: s.cwd || l?.cwd || runs.get(id)?.cwd, project: where.project, repoRoot: where.repoRoot, repos: where.repos, projectSource: where.source,
+      title: titleFor(s, l?.name ? l : job?.name ? { name: job.name } : null),
+      kind: job ? 'bg' : l?.kind ?? null, jobId: job ? job.jobId : l?.jobId ?? null,
+      lastPrompt: s.lastPrompt, gitBranch: s.gitBranch, updatedAt,
       status: l ? l.status : 'offline', statusSince: l?.since, waitingFor: l?.waitingFor, live: !!l,
       activity: l?.status === 'busy' ? s.lastActivity?.label : null,
       cost: s.cost || (runs.get(id)?.state !== 'running' && reports.get(id)?.cost) || 0, prs: s.prs?.length || 0, personality: personalities[id] || null,
       hiredBy: runs.get(id)?.hiredBy || personalities[id]?.hiredBy || null,
       background: runs.has(id), runState: runs.get(id)?.state || null, hasReport: reports.has(id),
-      linesAdded: s.linesAdded || 0, linesRemoved: s.linesRemoved || 0, toolCount: s.toolCount || 0, gitBranch: s.gitBranch,
-    });
-  };
-  // live sessions first (always shown, even before they write a transcript)
-  for (const [id, l] of live) {
-    const f = candidates.find(x => path.basename(x.f, '.jsonl') === id);
-    await push(id, f ? await parseTranscript(f.f) : {}, l);
-  }
-  for (const { f } of candidates) {
-    if (sessions.length >= MAX_ROOMS) break;
-    const id = path.basename(f, '.jsonl');
-    if (seen.has(id) || hidden.includes(id)) continue;
-    const s = await parseTranscript(f);
-    if (s.messageCount < 2) continue; // skip empty/one-shot noise
-    await push(id, s, null);
-  }
-  return sessions;
+      linesAdded: s.linesAdded || 0, linesRemoved: s.linesRemoved || 0, toolCount: s.toolCount || 0,
+    };
+  }));
+  return sessions.sort((a, b) => (b.live - a.live) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
 }
 
 async function knownProjects() {
@@ -1252,7 +1252,7 @@ async function demoRoute(url, req, res) {
   }
   if (url.pathname === '/api/projects') return json(res, 200, ['/home/dev/code/pixel-shop', '/home/dev/code/api-gateway', '/home/dev/code/docs-site']);
   if (url.pathname === '/api/hidden') return json(res, 200, []);
-  if (url.pathname === '/api/setup') return json(res, 200, { demo: true, claudeDirFound: true, transcripts: 14, live: 10, claudeCli: 'demo', terminal: 'iTerm', mcpConnected: false, customPersonalities: 0, boardCards: 7, maxDays: 14 });
+  if (url.pathname === '/api/setup') return json(res, 200, { demo: true, claudeDirFound: true, transcripts: 14, live: 10, claudeCli: 'demo', terminal: 'iTerm', mcpConnected: false, customPersonalities: 0, boardCards: 7 });
   return json(res, 200, { ok: true, demo: true }); // new/open/end/hide are no-ops in the demo
 }
 
@@ -1401,7 +1401,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/hidden') return json(res, 200, await loadHidden());
     if (url.pathname === '/api/setup') return json(res, 200, await setupStatus());
     if (url.pathname === '/api/projects') return json(res, 200, await knownProjects());
-    if (url.pathname === '/api/config') return json(res, 200, { terminal: TERMINAL, maxDays: MAX_DAYS, maxRooms: MAX_ROOMS, achievements: ACHIEVEMENTS.map(({ test, ...a }) => a), ranks: RANKS });
+    if (url.pathname === '/api/config') return json(res, 200, { terminal: TERMINAL, achievements: ACHIEVEMENTS.map(({ test, ...a }) => a), ranks: RANKS });
     if (req.method === 'POST' && url.pathname === '/api/new') {
       const { cwd, prompt, persona, role, background, todoId } = await readBody(req);
       if (!cwd || !fs.existsSync(cwd)) return json(res, 400, { error: 'project folder not found' });

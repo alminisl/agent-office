@@ -68,7 +68,7 @@ export async function ownedProcess(t, exited = false) {
   });
   return child.pid;
 }
-export async function api(t, base) {
+export async function api(t, base, env = {}) {
   const claude = mkdir(base, 'claude');
   const data = mkdir(base, 'office-data');
   mkdir(claude, 'sessions');
@@ -80,7 +80,7 @@ export async function api(t, base) {
   let logs = '';
   const child = spawn(process.execPath, ['server.mjs'], {
     cwd: new URL('../../', import.meta.url),
-    env: { ...isolatedEnv(), CLAUDE_DIR: claude, OFFICE_DATA_DIR: data, PORT: String(port), CLAUDE_BIN: '/usr/bin/false' },
+    env: { ...isolatedEnv(), CLAUDE_DIR: claude, OFFICE_DATA_DIR: data, PORT: String(port), CLAUDE_BIN: '/usr/bin/false', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', b => { logs += b; });
@@ -92,10 +92,16 @@ export async function api(t, base) {
       await done;
     }
   });
-  const sessions = async () => {
-    const response = await fetch(`http://127.0.0.1:${port}/api/sessions`, { signal: AbortSignal.timeout(2000) });
+  const request = async (route, body) => {
+    const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+      signal: AbortSignal.timeout(2000),
+      ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Office': '1' }, body: JSON.stringify(body) }),
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-    const result = await response.json();
+    return response.json();
+  };
+  const sessions = async () => {
+    const result = await request('/api/sessions');
     if (!Array.isArray(result)) throw new Error('Expected sessions array');
     return result;
   };
@@ -103,12 +109,20 @@ export async function api(t, base) {
   while (true) {
     try { await sessions(); break; } catch (error) {
       if (child.exitCode !== null || Date.now() > deadline) throw new Error(`Server did not become ready: ${error.message}\n${logs}`);
-      await new Promise(resolve => setTimeout(resolve, 25));
+      await new Promise(resolve => setImmediate(resolve));
     }
   }
   let revision = 0;
   return {
-    sessions,
+    sessions, request,
+    job(jobId, state) { this.rawJob(jobId, JSON.stringify(state)); },
+    rawJob(jobId, raw) { fs.writeFileSync(path.join(mkdir(claude, 'jobs', jobId), 'state.json'), raw); },
+    emptyJob(jobId) { mkdir(claude, 'jobs', jobId); },
+    removeJob(jobId) { fs.rmSync(path.join(claude, 'jobs', jobId, 'state.json')); },
+    mtime(id, value) {
+      const file = path.join(claude, 'projects', 'fixture-folder', `${id}.jsonl`);
+      fs.utimesSync(file, value, value);
+    },
     write(id, records) {
       const file = path.join(claude, 'projects', 'fixture-folder', `${id}.jsonl`);
       fs.writeFileSync(file, records.map(record => JSON.stringify(record)).join('\n') + '\n');
@@ -120,5 +134,37 @@ export async function api(t, base) {
     },
     removeLive(pid) { fs.rmSync(path.join(claude, 'sessions', `${pid}.json`)); },
     malformed() { fs.writeFileSync(path.join(claude, 'sessions', 'malformed.json'), '{invalid'); },
+  };
+}
+
+// Bounded condition polling yields to I/O; no fixed delay or retry-until-green assertion.
+export async function poll(read, accepts, label, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const value = await read();
+    if (accepts(value)) return value;
+    await new Promise(resolve => setImmediate(resolve));
+  } while (Date.now() < deadline);
+  throw new Error(`Timed out waiting for ${label}`);
+}
+export function fakeClaude(t, base) {
+  const control = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-claude-control-'));
+  const executable = path.join(base, 'fake-claude');
+  const source = fs.readFileSync(new URL('./fake-claude.mjs', import.meta.url), 'utf8');
+  // .mjs is required even in a temp directory without package.json.
+  const bin = `${executable}.mjs`;
+  fs.writeFileSync(bin, `#!${process.execPath}\n${source}`, { mode: 0o755 });
+  t.after(async () => {
+    for (const file of fs.readdirSync(control).filter(file => file.endsWith('.pid'))) {
+      const pid = Number(fs.readFileSync(path.join(control, file), 'utf8'));
+      try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      await poll(() => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } }, Boolean, 'fake Claude exit');
+    }
+    fs.rmSync(control, { recursive: true, force: true });
+  });
+  return {
+    env: { CLAUDE_BIN: bin, FAKE_CLAUDE_CONTROL: control },
+    started: id => fs.existsSync(path.join(control, `${id}.pid`)),
+    complete: id => fs.writeFileSync(path.join(control, `${id}.release`), ''),
   };
 }
