@@ -90,8 +90,8 @@ async function refresh() {
   }
   allSessions = fresh;
   const visible = fresh.filter(s => showOffline || replay.on || s.live || agents.get(s.id)?.leaving);
-  // the layout changes when the set of agents changes or someone moves into a private office
-  const layoutKey = list => list.map(s => `${s.id}${(s.level || 1) >= EXEC_LEVEL ? '*' : ''}`).join();
+  // the layout changes when the set of agents changes, someone moves into a private office, or a session's project changes
+  const layoutKey = list => list.map(s => `${s.id}${(s.level || 1) >= EXEC_LEVEL ? '*' : ''}|${s.project}`).join();
   const changedSet = layoutKey(visible) !== layoutKey(sessions);
   sessions = visible;
   if (changedSet || !world) rebuild();
@@ -1594,7 +1594,8 @@ function drawOverlay(s) {
 
   // cubicle nameplates on the front panel: status, name, project, level, title, context bar
   for (const room of world.rooms) {
-    const ss = room.session, a = agents.get(ss.id);
+    // room.session is the snapshot from the last layout; the agent holds the latest poll
+    const a = agents.get(room.session.id), ss = a?.session || room.session;
     const h = fs * 3 + 16 * dpr;
     const x = room.plaque.x * T * s, y = room.plaque.y * T * s;
     const w = room.plaque.w * T * s;
@@ -1617,7 +1618,7 @@ function drawOverlay(s) {
     ctx.font = `600 ${fs}px Inter, sans-serif`;
     ctx.fillStyle = '#fff';
     const icon = roleFor(a?.persona.role)?.icon;
-    const nm = `${icon ? `${icon} ` : ''}${a?.persona.name || ''}${prAgents.has(ss.id) ? ' 🔀' : ''}`;
+    const nm = `${icon ? `${icon} ` : ''}${a?.persona.name || ''}${ss.kind === 'bg' ? ' ⚙️' : ''}${prAgents.has(ss.id) ? ' 🔀' : ''}`;
     const who = room.kind === 'office' ? `${nm} · ${ss.rank || ''}` : nm;
     ctx.fillText(fit(who, w - 32 * dpr - lw), x + 19 * dpr, y + 5 * dpr + fs / 2);
     // status line: what they are doing right now
@@ -1834,6 +1835,7 @@ function updatePanelHeader() {
     `<span class="pill">${escapeHtml(preset)}</span>`,
     role ? `<span class="pill">${role.icon} ${escapeHtml(role.label)}</span>` : '',
     s.background ? '<span class="pill">🏢 in the office</span>' : '',
+    s.kind === 'bg' ? `<span class="pill" data-tip="A background job from Claude Code's agents view${s.jobId ? ` (job ${escapeHtml(s.jobId)})` : ''}">⚙️ background job</span>` : '',
     s.hiredBy ? `<span class="pill" data-tip="Hired by another agent through the agent-office tools">👥 hired by ${escapeHtml(personaFor(allSessions.find(x => x.id === s.hiredBy) || { id: s.hiredBy, personality: { name: p.hiredByName } }).name)}</span>` : '',
     (() => { const n = allSessions.filter(x => x.hiredBy === s.id).length; return n ? `<span class="pill" data-tip="Coworkers this agent hired">👥 ${n} hire${n > 1 ? 's' : ''}</span>` : ''; })(),
   ].join('');
@@ -1843,7 +1845,9 @@ function updatePanelHeader() {
   $('#openBtn').hidden = s.live;
   $('#pTitle').textContent = s.title;
   $('#pDoing').textContent = a.statusText();
-  $('#pMeta').textContent = `${s.project}${s.gitBranch ? ` · ${s.gitBranch}` : ''} · ${ago(s.updatedAt)}`;
+  const otherRepos = (s.repos || []).filter(r => r !== s.repoRoot).map(r => r.split('/').pop());
+  $('#pMeta').textContent = `${s.project}${s.projectSource === 'folder' ? ' (not a git repo)' : ''}${s.gitBranch ? ` · ${s.gitBranch}` : ''}${otherRepos.length ? ` · also ${otherRepos.join(', ')}` : ''}${s.jobId ? ` · job ${s.jobId}` : ''} · ${ago(s.updatedAt)}`;
+  $('#pMeta').title = s.repoRoot ? `${s.repoRoot}${s.projectSource === 'edits' ? ' (from the files this agent edited)' : ''}` : (s.cwd || '');
   $('#cmdText').textContent = resumeCmd(s);
   const av = $('#avatar').getContext('2d');
   av.imageSmoothingEnabled = false; av.clearRect(0, 0, 64, 104);
@@ -2249,7 +2253,7 @@ function renderEmployees() {
     ${rows.map(({ s, p, m, ds, pct }) => `<tr data-id="${s.id}">
       <td>${avatarCell(s)}</td>
       <td><b>${escapeHtml(p.name)}</b><div class="muted small">${escapeHtml(PRESETS.find(x => x.key === p.preset)?.label || 'Custom')}</div></td>
-      <td>${escapeHtml(s.project)}</td>
+      <td data-tip="${escapeHtml(s.repoRoot || s.cwd || '')}">${escapeHtml(s.project)}${s.kind === 'bg' ? ' ⚙️' : ''}</td>
       <td><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${STATUS_COLOR[ds]}"></span> ${ds === 'offline' ? 'out of office' : ds}</td>
       <td class="muted small" style="max-width:240px">${escapeHtml(s.status === 'busy' ? (s.activity || 'working') : s.title)}</td>
       <td class="mot" title="${escapeHtml(m.label)}">${m.icon} ${m.score}%</td>

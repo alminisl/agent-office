@@ -9,6 +9,7 @@ import { spawn, execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { demoSessions, demoDetail, demoSavePersonality, demoSavePersonalities, DEMO_REPLY, DEMO_QUIRKS, DEMO_STANDUP, demoTimeline, demoBoard, demoBoardOp, DEMO_PM, DEMO_PLAN, demoChat, demoChatOp, demoPRs, demoStartReviews, demoReviews, demoStartBrainstorm, demoBrainstorm, demoBrainstormList } from './demo.mjs';
+import { projectFor, titleFor } from './session-meta.mjs';
 
 const PORT = Number(process.env.PORT || 4747);
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -16,12 +17,13 @@ const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 const LIVE_DIR = path.join(CLAUDE_DIR, 'sessions');
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const PERSONALITIES_FILE = path.join(ROOT, 'data', 'personalities.json');
-const HIDDEN_FILE = path.join(ROOT, 'data', 'hidden.json');
-const REPORTS_DIR = path.join(ROOT, 'data', 'reports');
-const SETTINGS_FILE = path.join(ROOT, 'data', 'settings.json');
-const BOARD_FILE = path.join(ROOT, 'data', 'board.json');
-const CHATS_FILE = path.join(ROOT, 'data', 'chats.json');
+const DATA_DIR = process.env.OFFICE_DATA_DIR || path.join(ROOT, 'data'); // tests point this at a temp folder
+const PERSONALITIES_FILE = path.join(DATA_DIR, 'personalities.json');
+const HIDDEN_FILE = path.join(DATA_DIR, 'hidden.json');
+const REPORTS_DIR = path.join(DATA_DIR, 'reports');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const BOARD_FILE = path.join(DATA_DIR, 'board.json');
+const CHATS_FILE = path.join(DATA_DIR, 'chats.json');
 const WORKTREES_DIR = path.join(os.homedir(), '.agent-office', 'worktrees');
 const DEFAULT_SETTINGS = { hiring: { enabled: true, minLevel: 5, maxActive: 3 } };
 // Which terminal opens sessions. macOS: iTerm or Terminal. Linux: the first one found of
@@ -73,7 +75,7 @@ async function parseTranscript(file) {
   const raw = await fsp.readFile(file, 'utf8');
   const s = {
     id: path.basename(file, '.jsonl'), file, cwd: null, gitBranch: null, title: null,
-    lastPrompt: null, prompts: [], replies: [], files: {}, tools: {}, prs: [],
+    lastPrompt: null, prompts: [], replies: [], files: {}, editDirs: {}, tools: {}, prs: [],
     cost: 0, linesAdded: 0, linesRemoved: 0, firstAt: null, lastAt: null,
     lastActivity: null, messageCount: 0, model: null,
     // gamification counters
@@ -137,7 +139,13 @@ async function parseTranscript(file) {
             if (['WebFetch', 'WebSearch'].includes(c.name) || c.name.startsWith('mcp__claude-in-chrome')) s.webCalls++;
             if (['Agent', 'Task'].includes(c.name)) s.subagentsSpawned++;
             const fp = c.input?.file_path;
-            if (fp && ['Edit', 'Write', 'MultiEdit'].includes(c.name)) s.files[fp] = (s.files[fp] || 0) + 1;
+            if (fp && ['Edit', 'Write', 'MultiEdit'].includes(c.name)) {
+              s.files[fp] = (s.files[fp] || 0) + 1;
+              // where the edit landed, for the project: a relative path belongs to this line's cwd
+              const abs = path.isAbsolute(fp) ? fp : d.cwd ? path.resolve(d.cwd, fp) : null;
+              const at = Date.parse(d.timestamp) || 0;
+              if (abs) { const dir = path.dirname(path.normalize(abs)); s.editDirs[dir] = Math.max(s.editDirs[dir] || 0, at); }
+            }
             s.lastActivity = { at: d.timestamp, label: describeTool(c.name, c.input) };
             if (d.timestamp) s.events.push([Date.parse(d.timestamp), s.lastActivity.label]);
           }
@@ -152,6 +160,7 @@ async function parseTranscript(file) {
   s.prompts = s.prompts.slice(-15);
   s.replies = s.replies.slice(-8);
   s.files = Object.entries(s.files).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f, n]) => ({ path: f, edits: n }));
+  s.editDirs = Object.entries(s.editDirs).sort((a, b) => b[1] - a[1]).map(([dir, at]) => ({ dir, at })); // all of them: a cap can drop the only repo
   s.tools = Object.entries(s.tools).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, n]) => ({ name, n }));
   s.updatedAt = stat.mtimeMs;
   cache.set(file, { mtimeMs: stat.mtimeMs, summary: s });
@@ -314,7 +323,7 @@ function startBackgroundRun({ id, cwd, prompt, persona, role, hiredBy = null, to
 // ---------- PRs & MRs: tracking and "all hands" reviews ----------
 // Repos come from the folders your sessions run in. GitLab repos are read with `glab`, GitHub
 // repos with `gh` (both run inside the repo, so they use its remote and your existing login).
-const REVIEWS_FILE = path.join(ROOT, 'data', 'reviews.json');
+const REVIEWS_FILE = path.join(DATA_DIR, 'reviews.json');
 const sh = (cmd, args, cwd) => new Promise(resolve => execFile(cmd, args, { cwd, timeout: 30e3, maxBuffer: 20 * 1024 * 1024 }, (err, out, errOut) => resolve({ ok: !err, out: String(out || ''), err: String(errOut || err?.message || '') })));
 async function discoverRepos() {
   const roots = new Map();
@@ -580,7 +589,7 @@ async function deleteAgent(id, { trashTranscript = false } = {}) {
 // Round 1: every participant proposes ideas in their own voice (personality + what they work on).
 // Round 2 (optional): everyone reacts to the others' ideas. Then the PM synthesizes.
 // "deep" participants answer from a throwaway fork of their own session (full memory).
-const BRAINSTORMS_FILE = path.join(ROOT, 'data', 'brainstorms.json');
+const BRAINSTORMS_FILE = path.join(DATA_DIR, 'brainstorms.json');
 const brainstorms = new Map(); // id -> live state (also saved to disk when finished)
 const clipText = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
 async function participantBrief(id) {
@@ -823,7 +832,8 @@ async function liveSessions() {
     try {
       const d = JSON.parse(await fsp.readFile(path.join(LIVE_DIR, n), 'utf8'));
       if (!d.sessionId || !pidAlive(d.pid)) continue;
-      out.set(d.sessionId, { status: d.status || 'idle', waitingFor: d.waitingFor, name: d.name, pid: d.pid, cwd: d.cwd, since: d.statusUpdatedAt || d.updatedAt, startedAt: d.startedAt });
+      out.set(d.sessionId, { status: d.status || 'idle', waitingFor: d.waitingFor, name: d.name, pid: d.pid, cwd: d.cwd, since: d.statusUpdatedAt || d.updatedAt, startedAt: d.startedAt,
+        kind: d.kind ?? null, jobId: d.jobId ?? null }); // kind 'bg' + jobId: a background job from Claude Code's agents view
     } catch {}
   }
   return out;
@@ -858,10 +868,11 @@ async function listSessions() {
     seen.add(id);
     const g = s.file ? gamify(s) : null;
     const helpers = l && s.file ? await activeHelpers(s) : [];
+    const where = await projectFor({ cwd: s.cwd || l?.cwd, editDirs: s.editDirs });
     sessions.push({
       ...g, helpers,
-      id, cwd: s.cwd || l?.cwd, project: path.basename(s.cwd || l?.cwd || 'unknown'),
-      title: s.customTitle || s.title || s.lastPrompt?.slice(0, 60) || l?.name || 'New session',
+      id, cwd: s.cwd || l?.cwd, project: where.project, repoRoot: where.repoRoot, repos: where.repos, projectSource: where.source,
+      title: titleFor(s, l), kind: l?.kind ?? null, jobId: l?.jobId ?? null,
       lastPrompt: s.lastPrompt, gitBranch: s.gitBranch, updatedAt: s.updatedAt || l?.startedAt,
       status: l ? l.status : 'offline', statusSince: l?.since, waitingFor: l?.waitingFor, live: !!l,
       activity: l?.status === 'busy' ? s.lastActivity?.label : null,

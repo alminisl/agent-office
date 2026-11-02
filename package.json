@@ -6,7 +6,8 @@
   "description": "A pixel-art office where your Claude Code sessions come to life",
   "scripts": {
     "start": "node server.mjs",
-    "demo": "node server.mjs --demo"
+    "demo": "node server.mjs --demo",
+    "test": "node --test tests/"
   },
   "engines": {
     "node": ">=18"
