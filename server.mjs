@@ -761,7 +761,7 @@ async function agentApi(route, body) {
   const task = String(body.task || '').trim();
   if (!task) throw Object.assign(new Error('A hire needs a task.'), { status: 400 });
   const role = ROLE_TOOLS[body.role] ? body.role : 'fixer';
-  const cwd = body.project_path || me.cwd;
+  const cwd = body.project_path || me?.cwd || liveMe?.cwd;
   if (!cwd || !fs.existsSync(cwd)) throw Object.assign(new Error(`Project folder not found: ${cwd}`), { status: 400 });
   const personalities = await loadPersonalities();
   const used = new Set(Object.values(personalities).map(p => p.name));
@@ -853,13 +853,14 @@ async function allTranscripts() {
 // Background jobs exactly as Claude Code's agents view lists them: every jobs/<jobId>/state.json.
 // Its sessionId links the job to its transcript and live status file.
 async function backgroundJobs() {
-  const out = new Map(); // session id -> { jobId, name }
+  const out = new Map(); // session id -> { jobId, name, cwd }
+  const text = v => (typeof v === 'string' && v.trim() ? v : null);
   let names = [];
   try { names = await fsp.readdir(JOBS_DIR); } catch { return out; }
   for (const jobId of names) {
     try {
       const d = JSON.parse(await fsp.readFile(path.join(JOBS_DIR, jobId, 'state.json'), 'utf8'));
-      if (typeof d.sessionId === 'string' && d.sessionId) out.set(d.sessionId, { jobId, name: d.name });
+      if (text(d?.sessionId)) out.set(d.sessionId, { jobId, name: text(d.name), cwd: text(d.cwd) });
     } catch {} // no state.json (e.g. a spare process's folder) or a broken one: not a job
   }
   return out;
@@ -884,7 +885,7 @@ async function listSessions() {
     return {
       ...g, helpers,
       id, cwd: s.cwd || l?.cwd || runs.get(id)?.cwd, project: where.project, repoRoot: where.repoRoot, repos: where.repos, projectSource: where.source,
-      title: titleFor(s, l?.name ? l : job?.name ? { name: job.name } : null),
+      title: titleFor(s, l?.name?.trim() ? l : job?.name ? { name: job.name } : null),
       kind: job ? 'bg' : l?.kind ?? null, jobId: job ? job.jobId : l?.jobId ?? null,
       lastPrompt: s.lastPrompt, gitBranch: s.gitBranch, updatedAt,
       status: l ? l.status : 'offline', statusSince: l?.since, waitingFor: l?.waitingFor, live: !!l,
@@ -997,10 +998,11 @@ async function sessionDetail(id) {
   const f = files.find(x => path.basename(x, '.jsonl') === id);
   const run = runs.get(id);
   const live = (await liveSessions()).get(id) || (run && runAsLive(id, run));
-  if (!f && !live) return null;
+  const job = (await backgroundJobs()).get(id);
+  if (!f && !live && !job && !run) return null;
   // a session that just started may not have written its transcript yet
   const s = f ? await parseTranscript(f) : {
-    id, cwd: live.cwd, prompts: [], replies: [], files: [], tools: [], prs: [], cost: 0, linesAdded: 0, linesRemoved: 0,
+    id, cwd: live?.cwd || job?.cwd || run?.cwd, prompts: [], replies: [], files: [], tools: [], prs: [], cost: 0, linesAdded: 0, linesRemoved: 0,
     messageCount: 0, promptCount: 0, toolCount: 0, testRuns: 0, reads: 0, webCalls: 0, subagentsSpawned: 0,
     nightOwl: false, workMs: 0, context: 0, peakContext: 0, empty: true,
   };
