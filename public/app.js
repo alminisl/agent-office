@@ -1489,10 +1489,14 @@ function renderEmptyState() {
 }
 
 // ---------------- rendering ----------------
+const touchScreen = matchMedia('(max-width: 800px), (pointer: coarse)');
+const fitWidth = () => (viewport.clientWidth - 8) / (world.W * T);
+// Zooming out stops where the whole office fits the window's width (well below 1 on a phone).
+const minZoom = () => Math.min(1, fitWidth());
 function scale() {
   if (zoom) return zoom;
-  const fit = (viewport.clientWidth - 8) / (world.W * T);
-  return Math.max(1.5, Math.min(4, fit));
+  // On a phone or tablet auto-fit shows the whole office's width; pinch to get closer.
+  return Math.max(touchScreen.matches ? minZoom() : 1.5, Math.min(4, fitWidth()));
 }
 
 function resize() {
@@ -2125,23 +2129,44 @@ $('#showOffline').onchange = e => setShowOffline(e.target.checked);
 // Anything with data-tip gets an instant hover bubble (faster and nicer than the native title).
 const tip = document.createElement('div');
 tip.id = 'tip'; tip.hidden = true; document.body.appendChild(tip);
-let tipFor = null;
+let tipFor = null, lastTouch = -1e9;
 document.addEventListener('mouseover', e => {
+  if (performance.now() - lastTouch < 1000) return; // a tap's emulated hover: showing the tip would make iOS wait for a second tap
   const el = e.target.closest?.('[data-tip]');
   if (el === tipFor) return;
   tipFor = el;
   if (!el || !el.dataset.tip) { tip.hidden = true; return; }
   tip.textContent = el.dataset.tip; tip.hidden = false;
 });
-document.addEventListener('mousemove', e => {
-  if (tip.hidden) return;
+function placeTip(cx, cy, above) {
   const pad = 14, r = tip.getBoundingClientRect();
-  let x = e.clientX + pad, y = e.clientY + pad;
-  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - pad;
-  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - pad;
+  let x = cx + pad, y = above ? cy - r.height - 3 * pad : cy + pad;
+  if (x + r.width > innerWidth - 8) x = cx - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = cy - r.height - pad;
+  if (y < 8 && above) y = cy + 3 * pad;
   tip.style.left = `${Math.max(8, x)}px`; tip.style.top = `${Math.max(8, y)}px`;
-});
+}
+document.addEventListener('mousemove', e => { if (!tip.hidden) placeTip(e.clientX, e.clientY); });
 document.addEventListener('mousedown', () => { tip.hidden = true; tipFor = null; });
+// Touch screens have no hover: press and hold anything with a tooltip to read it (above the finger).
+let press = null;
+document.addEventListener('touchstart', e => {
+  lastTouch = performance.now(); clearTimeout(press?.timer); tip.hidden = true; tipFor = null;
+  const el = e.target.closest?.('[data-tip]'), t = e.touches[0];
+  press = null;
+  if (!el?.dataset.tip || e.touches.length > 1) return;
+  press = { x: t.clientX, y: t.clientY, shown: false };
+  press.timer = setTimeout(() => {
+    tip.textContent = el.dataset.tip; tip.hidden = false; tipFor = el; press.shown = true;
+    placeTip(press.x, press.y, true);
+  }, 450);
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  const t = e.touches[0];
+  if (press && !press.shown && Math.hypot(t.clientX - press.x, t.clientY - press.y) > 10) clearTimeout(press.timer);
+}, { passive: true });
+// After a long press, lifting the finger must not also click the button.
+document.addEventListener('touchend', e => { clearTimeout(press?.timer); if (press?.shown) e.preventDefault(); }, { passive: false });
 
 // ---------------- office dashboard ----------------
 // Motivation is a playful read of the agent's state: busy = in the zone, full context = burned out, etc.
@@ -2390,7 +2415,29 @@ $('#genQuirks').onclick = async () => {
 };
 function setZoom(z) { zoom = z; store.set('zoom', zoom); resize(); }
 $('#zoomIn').onclick = () => setZoom(Math.min(5, (zoom || scale()) + 0.5));
-$('#zoomOut').onclick = () => setZoom(Math.max(1, (zoom || scale()) - 0.5));
+$('#zoomOut').onclick = () => setZoom(Math.max(minZoom(), (zoom || scale()) - 0.5));
+
+// Pinch the office to zoom, keeping the spot between your fingers in place (one finger scrolls).
+let pinch = null;
+const fingers = t => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2, d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) });
+viewport.addEventListener('touchstart', e => {
+  if (e.touches.length !== 2 || !world) return;
+  const f = fingers(e.touches), r = canvas.getBoundingClientRect(), s = scale();
+  pinch = { d: f.d, s, wx: (f.x - r.left) / s, wy: (f.y - r.top) / s };
+}, { passive: true });
+viewport.addEventListener('touchmove', e => {
+  if (!pinch || e.touches.length !== 2) return;
+  e.preventDefault();
+  const f = fingers(e.touches);
+  zoom = Math.min(5, Math.max(minZoom(), pinch.s * f.d / pinch.d));
+  resize();
+  const r = canvas.getBoundingClientRect();
+  viewport.scrollLeft += r.left + pinch.wx * zoom - f.x;
+  viewport.scrollTop += r.top + pinch.wy * zoom - f.y;
+}, { passive: false });
+const endPinch = e => { if (pinch && e.touches.length < 2) { pinch = null; store.set('zoom', zoom); } };
+viewport.addEventListener('touchend', endPinch);
+viewport.addEventListener('touchcancel', endPinch);
 
 // ---------------- session control ----------------
 async function post(url, body) {
